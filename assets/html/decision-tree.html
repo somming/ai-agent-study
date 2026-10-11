@@ -1,0 +1,377 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>종합 기술 선택 결정 트리 — Q1~Q15</title>
+<style>
+  /* 레이어 색상은 작성 가이드 7절과 동일하게 고정 (reference-architecture.html과 같은 변수) */
+  :root {
+    --bg: #fafaf8; --fg: #1d1d1b; --muted: #6b6b6b; --line: #d9d9d4; --card: #ffffff;
+    --knowledge: #2E7D6B; --reasoning: #3A5FA8; --interaction: #B5651D; --cross: #6B6B6B;
+    --trend: #8E44AD; --dim: 0.42;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #15161a; --fg: #ececea; --muted: #9a9a95; --line: #33353b; --card: #1e2026; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.5 -apple-system, "Pretendard", "Noto Sans KR", system-ui, sans-serif; }
+  header { padding: 20px 28px 8px; }
+  header h1 { margin: 0 0 4px; font-size: 20px; font-weight: 650; }
+  header p { margin: 0; color: var(--muted); }
+  .legend { display: flex; gap: 16px; flex-wrap: wrap; padding: 8px 28px 0; color: var(--muted); font-size: 12px; align-items: center; }
+  .legend span::before { content: ""; display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: -1px; background: var(--c); }
+  .legend span.star::before { background: transparent; border: 2px solid var(--trend); width: 8px; height: 8px; }
+  .toolbar { display: flex; gap: 8px; flex-wrap: wrap; padding: 10px 28px 0; }
+  button { font: inherit; font-size: 12px; padding: 5px 10px; border-radius: 6px; border: 1px solid var(--line); background: var(--card); color: var(--fg); cursor: pointer; }
+  button:hover, button:focus-visible { border-color: var(--fg); outline: none; }
+  .wrap { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 20px; padding: 14px 28px 28px; }
+  @media (max-width: 980px) { .wrap { grid-template-columns: 1fr; } }
+
+  /* 트리 */
+  .tree { display: flex; flex-direction: column; }
+  .group { margin: 14px 0 2px; font-size: 12px; font-weight: 700; letter-spacing: .04em; color: var(--muted); text-transform: uppercase; }
+  .group b { color: var(--fg); }
+  .step { display: none; }
+  .step.show { display: block; }
+  .q { position: relative; background: var(--card); border: 1.5px solid var(--line); border-radius: 8px; padding: 10px 12px 10px 16px; cursor: pointer; }
+  .q::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 5px; border-radius: 8px 0 0 8px; background: var(--line); }
+  .q:hover, .q:focus-visible { border-color: var(--fg); outline: none; }
+  .step.answered .q::before, .step.open .q::before { background: var(--gc); }
+  .q .num { font-size: 11px; color: var(--muted); font-weight: 700; margin-right: 6px; }
+  .q .num.star { color: var(--trend); }
+  .q .vars { float: right; font-size: 11px; color: var(--muted); }
+  .q .txt { font-weight: 600; }
+  .q .hint { font-size: 12px; color: var(--muted); margin-top: 2px; }
+  .branches { display: none; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 8px; }
+  .step.open .branches, .step.answered .branches { display: grid; }
+  @media (max-width: 640px) { .branches { grid-template-columns: 1fr; } }
+  .leaf { position: relative; background: var(--card); border: 1.5px dashed var(--line); border-radius: 8px; padding: 8px 10px 8px 12px; cursor: pointer; transition: opacity .12s; }
+  .leaf::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 4px; border-radius: 8px 0 0 8px; background: var(--line); }
+  .leaf:hover, .leaf:focus-visible { border-color: var(--fg); outline: none; }
+  .leaf .ans { font-size: 11px; font-weight: 700; letter-spacing: .04em; color: var(--muted); }
+  .leaf .rec { margin: 3px 0 4px; }
+  .leaf .links { display: flex; flex-wrap: wrap; gap: 4px; }
+  .leaf .links a { font-size: 11px; text-decoration: none; color: var(--fg); background: var(--bg); border: 1px solid var(--line); border-left: 3px solid var(--lc); border-radius: 4px; padding: 1px 6px; }
+  .leaf .links a:hover { border-color: var(--fg); }
+  .step.answered .leaf.on { border-style: solid; border-color: var(--gc); box-shadow: 0 0 0 2px color-mix(in srgb, var(--gc) 22%, transparent); }
+  .step.answered .leaf.on::before { background: var(--gc); }
+  .step.answered .leaf.on .ans { color: var(--gc); }
+  .step.answered .leaf:not(.on) { opacity: var(--dim); }
+  .connector { width: 2px; height: 14px; margin: 0 0 0 24px; background: var(--line); }
+  .skipnote { font-size: 12px; color: var(--muted); padding: 4px 0 0 16px; }
+
+  /* 우측 패널 */
+  aside { position: sticky; top: 12px; align-self: start; background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; max-height: calc(100vh - 24px); overflow: auto; }
+  aside h2 { margin: 0 0 6px; font-size: 14px; }
+  aside p { margin: 0 0 8px; color: var(--muted); font-size: 12px; }
+  aside ol { margin: 0; padding-left: 18px; font-size: 12px; }
+  aside li { margin-bottom: 6px; }
+  aside li b { color: var(--gc); }
+  aside li .r { color: var(--fg); }
+  aside li a { color: var(--muted); text-decoration: none; margin-right: 4px; }
+  aside li a:hover { color: var(--fg); text-decoration: underline; }
+  aside .empty { color: var(--muted); font-size: 12px; }
+  #tip { position: fixed; pointer-events: none; background: var(--fg); color: var(--bg); padding: 6px 10px; border-radius: 6px; font-size: 12px; max-width: 340px; opacity: 0; transition: opacity .1s; z-index: 10; }
+  footer { padding: 0 28px 24px; color: var(--muted); font-size: 12px; }
+  footer a { color: inherit; }
+</style>
+</head>
+<body>
+<header>
+  <h1>종합 기술 선택 결정 트리 — Q1 ~ Q15</h1>
+  <p>질문 카드를 클릭하면 예/아니오 분기가 펼쳐집니다. 분기 카드를 고르면 경로가 하이라이트되고 다음 질문이 나타납니다. 리프의 태그를 클릭하면 해당 위키 페이지로 이동합니다. 질문 번호는 <a href="../../00-overview/02-decision-guide.md">02 결정 트리 페이지</a>와 동일합니다.</p>
+</header>
+<div class="legend">
+  <span style="--c: var(--knowledge)">Knowledge — Part 2</span>
+  <span style="--c: var(--reasoning)">Reasoning / Action — Part 3</span>
+  <span style="--c: var(--interaction)">Interaction — Part 4</span>
+  <span style="--c: var(--cross)">Cross-cutting — Part 0 · 1 · 5</span>
+  <span class="star" style="--c: var(--trend)">★ 트렌드 세 축을 묻는 질문 (Q6 온톨로지 · Q10 결정 모델 · Q11 뉴로심볼릭)</span>
+</div>
+<div class="toolbar">
+  <button id="btn-expand" type="button">전체 펼치기</button>
+  <button id="btn-collapse" type="button">접기 (처음부터)</button>
+  <button id="btn-copy" type="button">현재 경로를 결정 기록(Markdown)으로 복사</button>
+</div>
+<div class="wrap">
+  <main class="tree" id="tree" aria-label="결정 트리"></main>
+  <aside aria-label="현재 경로">
+    <h2>현재 경로 · 결정 기록 초안</h2>
+    <p>답한 질문과 받은 기본값. 02 페이지의 "결정 기록 템플릿" 표의 초안이 됩니다.</p>
+    <ol id="path"></ol>
+    <div id="path-empty" class="empty">아직 답한 질문이 없습니다. Q1부터 시작하세요.</div>
+  </aside>
+</div>
+<div id="tip" role="tooltip"></div>
+<footer>
+  기본값은 각 Part의 99 결정 매트릭스 "판단 어려울 때" 열과 동일합니다 (<a href="../../02-data-pipeline/99-decision-matrix.md">Part 2/99</a> · <a href="../../03-agent-workflow-rag/99-decision-matrix.md">Part 3/99</a> · <a href="../../04-dynamic-ui/99-decision-matrix.md">Part 4/99</a>). 트렌드 세 축의 "예"는 반드시 <code>[실측]</code> 근거가 있을 때만 — 없으면 "아니오"로 돌아갑니다 (<a href="../../00-overview/03-trend-radar-2026.md">트렌드 레이더</a>).
+</footer>
+
+<script>
+// ---- 데이터: 질문 트리 (md의 Q1~Q15와 1:1, 링크는 assets/html/ 기준 상대 경로) ----
+const BASE = "../../";
+// 페이지 코드 → 경로. 리프의 links 에서 짧은 코드로 참조한다.
+const P = {
+  "0/01": "00-overview/01-reference-architecture.md",
+  "1/02": "01-foundations/02-system1-vs-system2.md",
+  "2/01": "02-data-pipeline/01-source-ingestion.md",
+  "2/02": "02-data-pipeline/02-chunking-strategies.md",
+  "2/03": "02-data-pipeline/03-metadata-provenance.md",
+  "2/04": "02-data-pipeline/04-embedding-indexing.md",
+  "2/05": "02-data-pipeline/05-knowledge-graph-construction.md",
+  "2/06": "02-data-pipeline/06-ontology-driven-modeling.md",
+  "2/07": "02-data-pipeline/07-freshness-and-sync.md",
+  "2/08": "02-data-pipeline/08-grounding-data-design.md",
+  "2/09": "02-data-pipeline/09-ai-inside-the-pipeline.md",
+  "2/10": "02-data-pipeline/10-access-control-governance.md",
+  "3/01": "03-agent-workflow-rag/01-rag-architecture-patterns.md",
+  "3/02": "03-agent-workflow-rag/02-query-understanding.md",
+  "3/03": "03-agent-workflow-rag/03-retrieval-reranking.md",
+  "3/04": "03-agent-workflow-rag/04-generation-grounding.md",
+  "3/05": "03-agent-workflow-rag/05-workflow-vs-agent.md",
+  "3/06": "03-agent-workflow-rag/06-agent-design-patterns.md",
+  "3/07": "03-agent-workflow-rag/07-multi-agent-orchestration.md",
+  "3/08": "03-agent-workflow-rag/08-state-memory-context.md",
+  "3/09": "03-agent-workflow-rag/09-tools-and-mcp.md",
+  "3/10": "03-agent-workflow-rag/10-neuro-symbolic-reasoning.md",
+  "3/11": "03-agent-workflow-rag/11-decision-layer.md",
+  "3/12": "03-agent-workflow-rag/12-guardrails-hitl.md",
+  "3/13": "03-agent-workflow-rag/13-evaluation-rag-agents.md",
+  "3/14": "03-agent-workflow-rag/14-frameworks-landscape.md",
+  "4/01": "04-dynamic-ui/01-generative-ui-spectrum.md",
+  "4/02": "04-dynamic-ui/02-protocols-ag-ui-a2ui-mcp-apps.md",
+  "4/03": "04-dynamic-ui/03-component-registry-schema.md",
+  "4/04": "04-dynamic-ui/04-streaming-state-sync.md",
+  "4/05": "04-dynamic-ui/05-intent-to-ui-mapping.md",
+  "4/06": "04-dynamic-ui/06-hitl-ui-patterns.md",
+  "4/07": "04-dynamic-ui/07-frontend-integration.md",
+  "4/08": "04-dynamic-ui/08-security-sandboxing.md",
+  "4/10": "04-dynamic-ui/10-evaluation-genui.md",
+  "5/02": "05-cross-cutting/02-cost-latency-model-routing.md",
+  "5/03": "05-cross-cutting/03-observability-tracing.md",
+  "6/온톨로지": "06-trends/ontology-renaissance.md",
+  "6/뉴로심볼릭": "06-trends/neuro-symbolic.md",
+  "6/결정모델": "06-trends/decision-models.md",
+  "6/GraphRAG": "06-trends/graphrag-evolution.md",
+  "6/메모리": "06-trends/agent-memory.md",
+  "6/프로토콜": "06-trends/agentic-protocols-convergence.md",
+};
+const GROUPS = {
+  scope:       { label: "범위 — 어느 레이어가 필요한가", color: "var(--cross)" },
+  knowledge:   { label: "Knowledge — Part 2", color: "var(--knowledge)" },
+  reasoning:   { label: "Reasoning / Action — Part 3", color: "var(--reasoning)" },
+  interaction: { label: "Interaction — Part 4 (Q1이 \"아니오\"일 때만)", color: "var(--interaction)" },
+  cross:       { label: "횡단 — Part 5 · 프레임워크", color: "var(--cross)" },
+};
+const QUESTIONS = [
+  { id: "Q1", group: "scope", vars: "V10", q: "사용자가 결과를 읽기만 하는가?",
+    hint: "선택·수정·승인이 없으면 Interaction 레이어 대부분이 불필요",
+    yes: { rec: "Knowledge + Reasoning만. Interaction은 citation 렌더(4/06 일부)로 한정. 단 계약 ②·③은 미리 정의 — Q13·Q14 건너뜀", links: ["0/01", "4/06"] },
+    no:  { rec: "3-Layer 전체. Interaction은 Controlled 패턴부터 (Q13·Q14로)", links: ["0/01", "4/01"] } },
+  { id: "Q2", group: "scope", vars: "V9", q: "행동(툴 실행)이 있는가?",
+    hint: "읽기 전용 소수 툴도 '있음'. 쓰기·외부 전송이면 더욱",
+    yes: { rec: "결정 레이어(3/11) · 검증기(3/10) · 가드레일(3/12)을 경로 위에 생략 없이. 툴은 등급별 멱등·게이트", links: ["3/11", "3/10", "3/12", "3/09"] },
+    no:  { rec: "입출력 가드레일 + 사후 샘플링. HITL·내구 실행 불필요", links: ["3/12"] } },
+  { id: "Q3", group: "knowledge", vars: "V1", q: "데이터가 정형(DB·API) 중심인가?",
+    hint: "정형이면 근거 단위가 레코드, 그래프는 규칙으로 거의 공짜",
+    yes: { rec: "레코드를 근거 단위로. 템플릿 직렬화로 청킹 최소. 그래프는 규칙 추출. 정형 질의는 변환기 패턴(Text-to-SQL/Cypher, 읽기 전용)", links: ["2/08", "2/02", "2/05", "3/10"] },
+    no:  { rec: "청크 근거 단위. 직접 커넥터 + Docling 류 레이아웃 파서(샘플 100건 [실측]). 문서 구조 기반 + parent-child 청킹. 스캔 다수면 벤더 OCR 1차", links: ["2/01", "2/02", "2/08"] } },
+  { id: "Q4", group: "knowledge", vars: "V3 · V2", q: "신선도 SLO가 분 단위인가?",
+    hint: "가격·재고·알림처럼 소스 변경이 즉시 반영돼야 하는가",
+    yes: { rec: "CDC + 단일 변경 큐, 톰스톤 즉시", links: ["2/07", "2/01"] },
+    no:  { rec: "증분 배치 + 톰스톤 + 주 1회 전체 대조 + 문서 단위 멱등 재처리 + 블루/그린", links: ["2/07"] } },
+  { id: "Q5", group: "knowledge", vars: "V4 · V5", q: "규제·감사 대상이거나 citation이 필수인가?",
+    hint: "'출처를 밝혀라' 프롬프트만으로 감사 대응은 불가",
+    yes: { rec: "bitemporal 메타데이터(기록 시점 + 유효 시점). 근거 문장 필수 + 상충 처리. 감사 로그. 생성 후검증(근거 정합성 검사기)", links: ["2/03", "2/08", "2/10", "3/04"] },
+    no:  { rec: "평면 메타데이터 + 필수 4필드(source_uri · content_hash · ingested_at · locator). 청크 + 최소 필드. 구조화 citation + 존재 검증만", links: ["2/03", "2/08", "3/04"] } },
+  { id: "Q6", group: "knowledge", vars: "V6", star: true, q: "★ 온톨로지 — 질의 로그·골든셋에서 멀티홉·동일성·설명 요구가 [실측]으로 확인되었는가?",
+    hint: "'온톨로지 없이 먼저 시험'이 채택 기준의 전제. 벡터 + 택소노미로 골든셋을 통과하면 올리지 않는다",
+    yes: { rec: "경량 온톨로지(클래스 ≤ 30) → SHACL → LPG. 하이브리드 추출 그래프 + 증분 인덱싱. 근거 단위에 트리플·경로 추가. GraphRAG 계열은 '시험'(포맷 통제 비교)", links: ["2/06", "2/05", "2/08", "3/01", "6/온톨로지", "6/GraphRAG"] },
+    no:  { rec: "택소노미(SKOS)만. 그래프 미도입. Advanced RAG(hybrid + 리랭킹). 전환 준비물: 문서 유형·부서 택소노미와 질의 로그 수집", links: ["2/06", "2/05", "3/01", "6/온톨로지"] } },
+  { id: "Q7", group: "knowledge", vars: "V5", q: "문서별 ACL · 멀티테넌트 · PII 중 하나라도 있는가?",
+    hint: "'없음'은 확인한 경우에만. 확인 못 했으면 '예'",
+    yes: { rec: "테넌트 분리 + 메타데이터 사전 필터 + 렌더 전 재확인 + 수집 직후 PII 탐지·마스킹 + 계보 기반 삭제 + 게이트웨이 단일 강제", links: ["2/10"] },
+    no:  { rec: "전 직원 공개 · 단일 테넌트 · PII 없음을 확인한 뒤 최소 구성", links: ["2/10"] } },
+  { id: "Q8", group: "reasoning", vars: "V7", q: "과업이 고정 절차 또는 몇 가지 분기로 예측 가능한가?",
+    hint: "고정 절차를 자율 에이전트로 만드는 것이 가장 흔한 실수",
+    yes: { rec: "워크플로우 — 프롬프트 체이닝 또는 라우팅. Tool-use + Router. 구조화 상태 + 체크포인팅", links: ["3/05", "3/06", "3/08"] },
+    no:  { rec: "자율 에이전트(비용·단계 상한 필수). Plan-and-Execute + Reflection(횟수 상한). 내구 실행 런타임. 조치 부분은 워크플로우로 고정", links: ["3/05", "3/06", "3/08"] } },
+  { id: "Q9", group: "reasoning", vars: "V12", q: "툴·에이전트의 당사자가 둘 이상인가? (여러 팀 · 타 조직 · 외부 소비자)",
+    hint: "프로토콜은 경계를 넘는 당사자가 둘 이상일 때만 가치가 있다",
+    yes: { rec: "자체 MCP 서버(2026-07-28 개정 지원). Supervisor + 공유 상태, 타 조직은 A2A. 툴 20개 초과면 2단계 라우팅", links: ["3/09", "3/07", "6/프로토콜"] },
+    no:  { rec: "네이티브 함수 + 등급별 멱등·게이트 정책 + 결과 신뢰 경계. 단일 에이전트", links: ["3/09", "3/07"] } },
+  { id: "Q10", group: "reasoning", vars: "V8 · V15 · V2", star: true, q: "★ 결정 모델 — 판정 지점(라우팅·게이팅·승인 필요·UI 선택)의 선택지가 닫혀 있고, 한국어 평가셋 [실측]이 있는가?",
+    hint: "전 수치 [벤더], 영어 중심 학습. [실측] 없이는 채택하지 않는다",
+    yes: { rec: "결정 모델(Jev / Decisions API)을 decide() 어댑터 뒤에 배치, 보정 곡선 확인 후 θ 설정. 확신도 세 갈래 HITL. 결정 모델 라우터. 파이프라인 판정은 소형 분류기와 비교", links: ["3/11", "3/12", "3/02", "2/09", "6/결정모델", "1/02"] },
+    no:  { rec: "규칙 + 소형 LLM. 단 decide() 인터페이스·트레이스·평가셋을 먼저 만든다. 라우팅은 규칙 + 소형 LLM으로 로그 축적. 파이프라인은 규칙 → 소형 LLM → 분류기 증류", links: ["3/11", "3/02", "2/09", "6/결정모델", "1/02"] } },
+  { id: "Q11", group: "reasoning", vars: "V9 · V1", star: true, q: "★ 뉴로심볼릭 — 쓰기 이상 툴이 있거나, LLM 추출 결과가 인덱스·그래프에 적재되는가?",
+    hint: "검증기 패턴은 운영 표준. '결합 전체의 V&V는 미성숙'(검증)을 알고 쓴다",
+    yes: { rec: "JSON Schema + 규칙 게이트 + 재생성 상한 2회. 추출 → SHACL/등가 제약 검증. 정책 엔진(allow/deny/require_approval) + 행동 직전 규칙 최종 허가", links: ["3/10", "2/05", "2/09", "3/12", "6/뉴로심볼릭"] },
+    no:  { rec: "구조화 출력 + citation 존재 규칙 검증으로 충분. 3/10은 '해당 없음'", links: ["3/04", "6/뉴로심볼릭"] } },
+  { id: "Q12", group: "reasoning", vars: "V7 · V10", q: "사용자가 반복 방문하고 멀티세션 요구가 사용 사례로 확인되었는가?",
+    hint: "MemTrapBench: 메모리 5종 모두 no-memory보다 나쁨 [2차]",
+    yes: { rec: "항목 제한 자체 메모리. no-memory 대비 [실측] 후 채택. 조회 게이팅('이 턴에 기억을 쓸까')", links: ["3/08", "6/메모리"] },
+    no:  { rec: "구조화 상태 + 체크포인팅 + no-memory", links: ["3/08", "6/메모리"] } },
+  { id: "Q13", group: "interaction", vars: "V8 · V5", skipIf: { q: "Q1", a: "yes" }, q: "사용자의 행동이 비가역·고액·규제 대상인가?",
+    hint: "고위험 행동 UI에 생성 자유도는 가치가 없고 위험만 있다",
+    yes: { rec: "Controlled 고정(자유도 0). 승인 카드(영향 범위·근거·as_shown_hash). 타임아웃 = 실행 안 함 + 에스컬레이션. 매핑은 규칙만. 고위험 UI A/B 금지", links: ["4/01", "4/06", "4/05", "4/10"] },
+    no:  { rec: "Controlled 기본 + 선택지 제시·인라인 수정. 규칙 1차 필터 + LLM 툴 호출 매핑(트레이스 기록). 조합 폭발 의도(임의 열 비교표)만 Declarative 검토", links: ["4/06", "4/05", "4/01"] } },
+  { id: "Q14", group: "interaction", vars: "V11 · V12", skipIf: { q: "Q1", a: "yes" }, q: "프론트·백이 분리되었거나 백엔드가 여럿인가, 또는 모바일 네이티브·서드파티 툴 UI가 필요한가?",
+    hint: "내장 스트리밍 위에 AG-UI 흉내(두 규약 유지)는 피해야 할 조합",
+    yes: { rec: "전송층 AG-UI. 네이티브 Declarative는 A2UI 렌더러 [실측] 후. 서드파티 UI는 MCP Apps iframe '표시만'부터 + 샌드박스", links: ["4/02", "4/07", "4/08", "6/프로토콜"] },
+    no:  { rec: "프레임워크 내장 스트리밍, '툴 호출 = 컴포넌트'로 설계. React 클라이언트 레지스트리 + 이벤트 어댑터. JSON Schema 레지스트리 원본. SSE + 혼합 동기화", links: ["4/02", "4/07", "4/03", "4/04"] } },
+  { id: "Q15", group: "cross", vars: "V14 · V13", q: "단일 벤더 종속을 허용하는가?",
+    hint: "공통: 프레임워크 밖 모듈(상태 스키마·툴 카탈로그·decide()·정책·평가셋)을 먼저",
+    yes: { rec: "해당 벤더 SDK(Claude Agent SDK / OpenAI Agents SDK / Google ADK). Java·Go·TS 팀은 ADK, .NET은 Semantic Kernel. + 공통: 자체 트레이스 스키마 + OTel 매핑 계층, 모델 라우팅·캐시, L1 규칙 CI + L2 골든셋", links: ["3/14", "5/03", "5/02", "3/13"] },
+    no:  { rec: "LangGraph(벤더 중립·복잡 상태). + 공통: 자체 트레이스 스키마 + OTel 매핑 계층, 모델 라우팅·캐시, L1 규칙 CI + L2 골든셋", links: ["3/14", "5/03", "5/02", "3/13"] } },
+];
+
+// ---- 상태 ----
+const answers = {};          // Q id → "yes" | "no"
+let expandAll = false;
+const tree = document.getElementById("tree");
+const tip = document.getElementById("tip");
+
+function layerOf(code) {
+  const p = code.split("/")[0];
+  return p === "2" ? "var(--knowledge)" : p === "3" ? "var(--reasoning)" : p === "4" ? "var(--interaction)" : p === "6" ? "var(--trend)" : "var(--cross)";
+}
+function linkTag(code) {
+  const a = document.createElement("a");
+  a.href = BASE + P[code]; a.textContent = code; a.style.setProperty("--lc", layerOf(code));
+  a.title = P[code];
+  a.addEventListener("click", e => e.stopPropagation());
+  a.addEventListener("mousemove", e => { tip.textContent = P[code]; tip.style.left = (e.clientX + 12) + "px"; tip.style.top = (e.clientY + 12) + "px"; tip.style.opacity = 1; });
+  a.addEventListener("mouseleave", () => tip.style.opacity = 0);
+  return a;
+}
+function isSkipped(qd) { return !!(qd.skipIf && answers[qd.skipIf.q] === qd.skipIf.a); }
+function nextOf(idx) {
+  for (let j = idx + 1; j < QUESTIONS.length; j++) if (!isSkipped(QUESTIONS[j])) return j;
+  return -1;
+}
+function leaf(qd, which) {
+  const b = qd[which];
+  const d = document.createElement("div");
+  d.className = "leaf"; d.tabIndex = 0; d.setAttribute("role", "button");
+  d.setAttribute("aria-label", (which === "yes" ? "예: " : "아니오: ") + b.rec);
+  const ans = document.createElement("div"); ans.className = "ans"; ans.textContent = which === "yes" ? "예 →" : "아니오 →";
+  const rec = document.createElement("div"); rec.className = "rec"; rec.textContent = b.rec;
+  const links = document.createElement("div"); links.className = "links";
+  b.links.forEach(c => links.appendChild(linkTag(c)));
+  d.append(ans, rec, links);
+  const pick = () => { answers[qd.id] = which; render(); focusStep(nextOf(QUESTIONS.indexOf(qd))); };
+  d.addEventListener("click", pick);
+  d.addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); pick(); } });
+  return d;
+}
+let openSet = new Set(["Q1"]);  // 분기를 펼쳐 둔 질문
+function step(qd, idx) {
+  const g = GROUPS[qd.group];
+  const s = document.createElement("section");
+  s.className = "step"; s.id = "step-" + qd.id; s.style.setProperty("--gc", g.color);
+  const answered = !!answers[qd.id];
+  if (answered) s.classList.add("answered");
+  if (openSet.has(qd.id) || expandAll) s.classList.add("open");
+  // 표시 조건: 전체 펼치기, 또는 첫 질문, 또는 직전(건너뛰지 않은) 질문이 답해짐
+  let prev = -1; for (let j = idx - 1; j >= 0; j--) if (!isSkipped(QUESTIONS[j])) { prev = j; break; }
+  const visible = expandAll || idx === 0 || (prev >= 0 && !!answers[QUESTIONS[prev].id]);
+  if (visible && !isSkipped(qd)) s.classList.add("show");
+
+  const q = document.createElement("div");
+  q.className = "q"; q.tabIndex = 0; q.setAttribute("role", "button"); q.setAttribute("aria-expanded", s.classList.contains("open"));
+  const num = document.createElement("span"); num.className = "num" + (qd.star ? " star" : ""); num.textContent = qd.id;
+  const vars = document.createElement("span"); vars.className = "vars"; vars.textContent = qd.vars;
+  const txt = document.createElement("span"); txt.className = "txt"; txt.textContent = qd.q;
+  const hint = document.createElement("div"); hint.className = "hint"; hint.textContent = qd.hint;
+  q.append(num, vars, txt, hint);
+  const toggle = () => { if (openSet.has(qd.id)) openSet.delete(qd.id); else openSet.add(qd.id); render(); };
+  q.addEventListener("click", toggle);
+  q.addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(); } });
+
+  const br = document.createElement("div"); br.className = "branches";
+  const ly = leaf(qd, "yes"), ln = leaf(qd, "no");
+  if (answers[qd.id] === "yes") ly.classList.add("on");
+  if (answers[qd.id] === "no") ln.classList.add("on");
+  br.append(ly, ln);
+  s.append(q, br);
+  return s;
+}
+function render() {
+  tree.innerHTML = "";
+  let lastGroup = null;
+  QUESTIONS.forEach((qd, idx) => {
+    const skipped = isSkipped(qd);
+    if (qd.group !== lastGroup) {
+      const h = document.createElement("div"); h.className = "group";
+      h.innerHTML = "<b>" + GROUPS[qd.group].label + "</b>";
+      // 그룹 헤더는 그룹의 첫 질문이 보일 때만
+      const firstVisible = expandAll || idx === 0 || QUESTIONS.slice(0, idx).filter(x => !isSkipped(x)).every((x, k, arr) => k < arr.length - 1 || !!answers[x.id]);
+      if (firstVisible && !skipped) tree.appendChild(h);
+      lastGroup = qd.group;
+    }
+    if (skipped) {
+      if (expandAll || answers["Q1"]) {
+        const n = document.createElement("div"); n.className = "skipnote";
+        n.textContent = qd.id + " 건너뜀 — Q1 \"예\"(읽기만)이므로 Interaction 질문은 해당 없음";
+        if (idx > 0 && (expandAll || answers[QUESTIONS[idx - 1].id] || isSkipped(QUESTIONS[idx - 1]))) tree.appendChild(n);
+      }
+      return;
+    }
+    const s = step(qd, idx);
+    if (s.classList.contains("show") && tree.lastElementChild && tree.lastElementChild.classList.contains("step")) {
+      const c = document.createElement("div"); c.className = "connector"; tree.appendChild(c);
+    }
+    tree.appendChild(s);
+  });
+  renderPath();
+}
+function focusStep(idx) {
+  if (idx < 0) return;
+  const el = document.getElementById("step-" + QUESTIONS[idx].id);
+  if (el) { const q = el.querySelector(".q"); if (q) { q.focus({ preventScroll: true }); el.scrollIntoView({ behavior: "smooth", block: "center" }); } }
+}
+function renderPath() {
+  const ol = document.getElementById("path"); const empty = document.getElementById("path-empty");
+  ol.innerHTML = "";
+  const rows = QUESTIONS.filter(q => answers[q.id] && !isSkipped(q));
+  empty.style.display = rows.length ? "none" : "block";
+  rows.forEach(q => {
+    const a = answers[q.id], b = q[a];
+    const li = document.createElement("li"); li.style.setProperty("--gc", GROUPS[q.group].color);
+    const head = document.createElement("div");
+    head.innerHTML = "<b>" + q.id + " · " + (a === "yes" ? "예" : "아니오") + "</b> <span class='r'>" + b.rec + "</span>";
+    const links = document.createElement("div");
+    b.links.forEach(c => { const x = document.createElement("a"); x.href = BASE + P[c]; x.textContent = c; links.appendChild(x); });
+    li.append(head, links);
+    ol.appendChild(li);
+  });
+}
+function toMarkdown() {
+  const rows = QUESTIONS.filter(q => answers[q.id] && !isSkipped(q));
+  const lines = ["| 변수 값 (V#) | 질문 (Q#) · 답 | 단계 | 선택 | 대안 (채택 안 한 이유) | 이유 | 근거 페이지 |", "|---|---|---|---|---|---|---|"];
+  rows.forEach(q => {
+    const a = answers[q.id], b = q[a], alt = q[a === "yes" ? "no" : "yes"];
+    const stages = b.links.filter(c => !c.startsWith("6/")).join(" · ");
+    const refs = b.links.map(c => "[" + c + "](" + P[c].replace(/^/, "../") + ")").join(" ");
+    lines.push("| " + q.vars + " = | " + q.id + " · " + (a === "yes" ? "예" : "아니오") + " | " + stages + " | " + b.rec + " | " + alt.rec + " | | " + refs + " |");
+  });
+  return lines.join("\n");
+}
+document.getElementById("btn-expand").addEventListener("click", () => { expandAll = true; render(); });
+document.getElementById("btn-collapse").addEventListener("click", () => { expandAll = false; for (const k in answers) delete answers[k]; openSet = new Set(["Q1"]); render(); focusStep(0); });
+document.getElementById("btn-copy").addEventListener("click", async (e) => {
+  const md = toMarkdown(); const btn = e.currentTarget;
+  try { await navigator.clipboard.writeText(md); btn.textContent = "복사됨 — 02 페이지 결정 기록 표에 붙여넣기"; }
+  catch (_) { // 클립보드 API가 막힌 환경(file:// 등)에서는 textarea 폴백
+    const ta = document.createElement("textarea"); ta.value = md; ta.style.position = "fixed"; ta.style.opacity = 0; document.body.appendChild(ta); ta.select();
+    try { document.execCommand("copy"); btn.textContent = "복사됨 — 02 페이지 결정 기록 표에 붙여넣기"; } catch (__) { btn.textContent = "복사 실패 — 아래 패널의 내용을 직접 옮기세요"; }
+    document.body.removeChild(ta);
+  }
+  setTimeout(() => btn.textContent = "현재 경로를 결정 기록(Markdown)으로 복사", 2500);
+});
+render();
+</script>
+</body>
+</html>

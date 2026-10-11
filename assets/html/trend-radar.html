@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>트렌드 레이더 2026 — 채택 / 시험 / 관찰 / 보류</title>
+<style>
+  /* 레이어 색상은 작성 가이드 7절과 동일하게 고정 (reference-architecture.html과 같은 변수) */
+  :root {
+    --bg: #fafaf8; --fg: #1d1d1b; --muted: #6b6b6b; --line: #d9d9d4; --card: #ffffff;
+    --knowledge: #2E7D6B; --reasoning: #3A5FA8; --interaction: #B5651D; --cross: #6B6B6B;
+    --trend: #8E44AD;
+    --q-adopt: rgba(46,125,107,.07); --q-trial: rgba(58,95,168,.07); --q-watch: rgba(181,101,29,.07); --q-hold: rgba(107,107,107,.09);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #15161a; --fg: #ececea; --muted: #9a9a95; --line: #33353b; --card: #1e2026;
+      --q-adopt: rgba(46,125,107,.16); --q-trial: rgba(58,95,168,.16); --q-watch: rgba(181,101,29,.16); --q-hold: rgba(107,107,107,.18); }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.5 -apple-system, "Pretendard", "Noto Sans KR", system-ui, sans-serif; }
+  header { padding: 20px 28px 8px; }
+  header h1 { margin: 0 0 4px; font-size: 20px; font-weight: 650; }
+  header p { margin: 0; color: var(--muted); }
+  .legend { display: flex; gap: 14px; flex-wrap: wrap; padding: 8px 28px 0; color: var(--muted); font-size: 12px; align-items: center; }
+  .legend button { font: inherit; font-size: 12px; color: var(--muted); background: transparent; border: 1px solid transparent; border-radius: 6px; padding: 2px 8px 2px 4px; cursor: pointer; }
+  .legend button::before { content: ""; display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; vertical-align: -1px; background: var(--c); }
+  .legend button.off { opacity: .4; text-decoration: line-through; }
+  .legend button:hover, .legend button:focus-visible { border-color: var(--line); outline: none; }
+  .legend span.star::before { content: ""; display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; vertical-align: -1px; border: 2px solid var(--trend); }
+  .wrap { display: grid; grid-template-columns: minmax(420px, 760px) minmax(320px, 1fr); gap: 20px; padding: 12px 28px 28px; align-items: start; }
+  @media (max-width: 980px) { .wrap { grid-template-columns: 1fr; } }
+  svg { width: 100%; height: auto; display: block; }
+  .ring { fill: none; stroke: var(--line); stroke-dasharray: 3 4; }
+  .axis { stroke: var(--line); stroke-width: 1.5; }
+  .qlabel { font-size: 13px; font-weight: 700; letter-spacing: .02em; }
+  .qsub { font-size: 11px; fill: var(--muted); }
+  .dot { cursor: pointer; }
+  .dot circle { stroke-width: 1.5; stroke: var(--card); transition: r .1s; }
+  .dot.star circle { stroke: var(--trend); stroke-width: 2.5; }
+  .dot text { font-size: 10px; fill: var(--fg); pointer-events: none; }
+  .dot:hover circle, .dot:focus circle, .dot.hl circle { r: 9; }
+  .dot:focus { outline: none; }
+  .dot.dim { opacity: .18; }
+  .rnote { font-size: 11px; fill: var(--muted); }
+
+  /* 목록 */
+  .list h2 { margin: 6px 0 4px; font-size: 13px; letter-spacing: .03em; }
+  .list h2 small { color: var(--muted); font-weight: 400; }
+  .row { display: grid; grid-template-columns: 36px 1fr; gap: 6px; padding: 5px 8px; border-radius: 6px; border: 1px solid transparent; font-size: 12px; cursor: default; }
+  .row:hover, .row.hl { background: var(--card); border-color: var(--line); }
+  .row.dim { opacity: .3; }
+  .row .id { font-weight: 700; color: var(--lc); }
+  .row .name a { color: var(--fg); text-decoration: none; font-weight: 600; }
+  .row .name a:hover { text-decoration: underline; }
+  .row .meta { color: var(--muted); }
+  .row .meta code { font-size: 11px; background: var(--card); border: 1px solid var(--line); border-radius: 3px; padding: 0 4px; }
+  .row .apply a { font-size: 11px; color: var(--muted); text-decoration: none; margin-right: 6px; }
+  .row .apply a:hover { color: var(--fg); text-decoration: underline; }
+  .moves { margin: 14px 28px 0; background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; font-size: 12px; }
+  .moves h2 { margin: 0 0 6px; font-size: 13px; }
+  .moves table { border-collapse: collapse; width: 100%; }
+  .moves th, .moves td { border: 1px solid var(--line); padding: 4px 8px; text-align: left; vertical-align: top; }
+  .moves th { background: var(--bg); white-space: nowrap; }
+  #tip { position: fixed; pointer-events: none; background: var(--fg); color: var(--bg); padding: 8px 10px; border-radius: 6px; font-size: 12px; max-width: 360px; opacity: 0; transition: opacity .1s; z-index: 10; line-height: 1.45; }
+  #tip b { display: block; margin-bottom: 2px; }
+  #tip .k { opacity: .75; }
+  footer { padding: 16px 28px 24px; color: var(--muted); font-size: 12px; }
+  footer a { color: inherit; }
+</style>
+</head>
+<body>
+<header>
+  <h1>트렌드 레이더 2026 — 2025-10 ~ 2026-10</h1>
+  <p>4분면은 <b>검증 수준</b>이다(유망함이 아니라 "채택해도 될 만큼 검증되었는가"). 점 호버 시 요지·검증 수준·first_seen, 클릭·Enter 시 심화 페이지로 이동. 중심에 가까울수록 최근(first_seen). 항목 번호(T#)는 <a href="../../00-overview/03-trend-radar-2026.md">03 트렌드 레이더 페이지</a>의 표와 동일.</p>
+</header>
+<div class="legend" id="legend">
+  <button type="button" data-layer="knowledge" style="--c: var(--knowledge)">Knowledge</button>
+  <button type="button" data-layer="reasoning" style="--c: var(--reasoning)">Reasoning / Action</button>
+  <button type="button" data-layer="interaction" style="--c: var(--interaction)">Interaction</button>
+  <button type="button" data-layer="cross" style="--c: var(--cross)">Cross-cutting</button>
+  <span class="star">★ 필수 주제 세 축 (온톨로지 · 뉴로심볼릭 · 결정 모델)</span>
+  <span style="margin-left:auto">레이어 버튼을 눌러 숨기기/보이기</span>
+</div>
+<div class="wrap">
+  <div>
+    <svg id="radar" viewBox="0 0 760 760" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="트렌드 레이더 4분면"></svg>
+  </div>
+  <div class="list" id="list" aria-label="트렌드 목록"></div>
+</div>
+<div class="moves">
+  <h2>이동 조건 (작성 가이드 5절 · Part 6 "채택으로 올리는 절차")</h2>
+  <table>
+    <tr><th>이동</th><th>조건</th></tr>
+    <tr><td>관찰 → 시험</td><td>요구가 <code>[실측]</code>으로 확인되고(멀티홉 비율, 쓰기 툴, 당사자 둘 이상, 멀티세션 요구 등) 한국어 평가셋·골든셋 작업이 시작된 시점</td></tr>
+    <tr><td>시험 → 채택</td><td>해당 Part 6 페이지의 "우리 프로젝트에서의 채택 기준"이 <b>전부</b> <code>[실측]</code> + ① 벤더 주장 vs 검증 표 갱신 ② 시나리오 페이지에 PoC 기록 ③ 적용 단계 비교표에 행 추가 ④ 레이더 갱신·CHANGELOG. <code>[벤더]</code>·<code>[2차]</code>만으로는 채택하지 않는다</td></tr>
+    <tr><td>→ 보류</td><td>역결과 <code>[검증]</code>/<code>[실측]</code>(예: no-memory보다 나쁨), 유지보수 모드 전환, 표준 편입으로 독립 항목 소멸</td></tr>
+    <tr><td>보류 → 관찰</td><td>상태 변화 — 재활성화, 역결과의 반박, 원문 확인</td></tr>
+  </table>
+</div>
+<div id="tip" role="tooltip"></div>
+<footer>
+  분면·first_seen은 <a href="../../06-trends/00-overview.md">Part 6</a> 각 페이지의 프론트매터와 일치. 세부 항목은 소속 단계 페이지의 maturity와 서술을 근거로 두었고 근거가 약하면 "관찰". 모든 날짜·수치는 <a href="../../_meta/research-notes-2026-10.md">연구 노트</a>에 있는 것만.
+</footer>
+
+<script>
+// ---- 데이터: md 레이더 표(T01~T28)와 1:1. 링크는 assets/html/ 기준 상대 경로 ----
+const BASE = "../../";
+const P = {
+  "1/02": "01-foundations/02-system1-vs-system2.md",
+  "1/05": "01-foundations/05-agentic-protocols.md",
+  "1/06": "01-foundations/06-evaluation-observability.md",
+  "2/02": "02-data-pipeline/02-chunking-strategies.md",
+  "2/04": "02-data-pipeline/04-embedding-indexing.md",
+  "2/05": "02-data-pipeline/05-knowledge-graph-construction.md",
+  "2/06": "02-data-pipeline/06-ontology-driven-modeling.md",
+  "2/07": "02-data-pipeline/07-freshness-and-sync.md",
+  "2/08": "02-data-pipeline/08-grounding-data-design.md",
+  "2/09": "02-data-pipeline/09-ai-inside-the-pipeline.md",
+  "3/01": "03-agent-workflow-rag/01-rag-architecture-patterns.md",
+  "3/02": "03-agent-workflow-rag/02-query-understanding.md",
+  "3/03": "03-agent-workflow-rag/03-retrieval-reranking.md",
+  "3/04": "03-agent-workflow-rag/04-generation-grounding.md",
+  "3/07": "03-agent-workflow-rag/07-multi-agent-orchestration.md",
+  "3/08": "03-agent-workflow-rag/08-state-memory-context.md",
+  "3/09": "03-agent-workflow-rag/09-tools-and-mcp.md",
+  "3/10": "03-agent-workflow-rag/10-neuro-symbolic-reasoning.md",
+  "3/11": "03-agent-workflow-rag/11-decision-layer.md",
+  "3/12": "03-agent-workflow-rag/12-guardrails-hitl.md",
+  "3/13": "03-agent-workflow-rag/13-evaluation-rag-agents.md",
+  "3/14": "03-agent-workflow-rag/14-frameworks-landscape.md",
+  "4/01": "04-dynamic-ui/01-generative-ui-spectrum.md",
+  "4/02": "04-dynamic-ui/02-protocols-ag-ui-a2ui-mcp-apps.md",
+  "4/03": "04-dynamic-ui/03-component-registry-schema.md",
+  "4/04": "04-dynamic-ui/04-streaming-state-sync.md",
+  "4/05": "04-dynamic-ui/05-intent-to-ui-mapping.md",
+  "4/06": "04-dynamic-ui/06-hitl-ui-patterns.md",
+  "4/07": "04-dynamic-ui/07-frontend-integration.md",
+  "4/08": "04-dynamic-ui/08-security-sandboxing.md",
+  "4/10": "04-dynamic-ui/10-evaluation-genui.md",
+  "5/02": "05-cross-cutting/02-cost-latency-model-routing.md",
+  "5/03": "05-cross-cutting/03-observability-tracing.md",
+  "5/04": "05-cross-cutting/04-governance-explainability.md",
+};
+const T6 = {
+  ont: "06-trends/ontology-renaissance.md", ns: "06-trends/neuro-symbolic.md", dm: "06-trends/decision-models.md",
+  gr: "06-trends/graphrag-evolution.md", ce: "06-trends/context-engineering.md", mem: "06-trends/agent-memory.md",
+  pr: "06-trends/agentic-protocols-convergence.md", gui: "06-trends/generative-ui.md",
+};
+// seen: "YYYY-MM" (월 미기록이면 "YYYY"). seenLabel 은 표 표기 그대로.
+const ITEMS = [
+  { id: "T01", name: "온톨로지 르네상스", star: true, quad: "시험", layer: "knowledge", seen: "2026-03", gist: "\"스키마 없는 그래프는 또 다른 비정형 데이터.\" 추출 스키마·검증기·접지·설명을 온톨로지로. 담론 생산자 대부분이 그래프 DB 벤더", ev: "[검증-단일저자] 2604.00555 · [벤더] Franz/Gartner 전언 · [2차]", apply: ["2/05","2/06","2/08","3/10","4/05","5/04"], deep: T6.ont, bold: true },
+  { id: "T02", name: "뉴로심볼릭", star: true, quad: "시험", layer: "reasoning", seen: "2026-02", gist: "LLM 출력을 규칙·제약·온톨로지로 검증하는 2단계 구성이 기업 패턴으로 재명명. 검증기 패턴은 운영 표준에 가깝지만 결합 전체의 V&V는 미성숙", ev: "[검증] Renkhoff 2024, 2602.00731 · [벤더] NSAI 식별", apply: ["2/09","3/04","3/10","3/12","4/03"], deep: T6.ns, bold: true },
+  { id: "T03", name: "결정 모델 (범주)", star: true, quad: "관찰", layer: "reasoning", seen: "2026-09", gist: "생성 없이 타입드 판정 + 확신도만. 라우팅·게이팅·분류의 새 기본값 후보. 공개 한 달, 독립 벤치마크 없음, 영어 중심", ev: "[벤더] [2차] 소스 충돌", apply: ["2/09","3/02","3/11","3/12","4/05","5/02"], deep: T6.dm, bold: true },
+  { id: "T04", name: "Jev (TypeSafe AI)", star: true, quad: "관찰", layer: "reasoning", seen: "2026-09", gist: "결정 전용 비자기회귀 모델, 단일 패스 병렬 샘플링, RLCD 보정 주장. 70~500ms · \"200배/400배\"는 비교 조건 미공개", ev: "[벤더] [2차] LangChain 테스트 1건 외 없음", apply: ["3/11","1/02"], deep: T6.dm },
+  { id: "T05", name: "OpenAI Decisions API", star: true, quad: "관찰", layer: "reasoning", seen: "2026-09", gist: "범용 모델(gpt-6-luna) 출력을 제약한 POST /v1/decisions. 별도 결정 전용 모델 아님, 이미지 입력, 지연 미보고", ev: "[2차] 발표일(09-29)·베타(10-06경)·가격 소스 충돌", apply: ["3/11","1/02"], deep: T6.dm },
+  { id: "T06", name: "GraphRAG의 진화", quad: "시험", layer: "reasoning", seen: "2025-10", gist: "GraphRAG 비용 비판 → LightRAG(증분) · HippoRAG 2(PPR)로 분화. 재분석 결과 \"단일 승자 없음, 가치는 질의 복잡도에 비례\"", ev: "[검증] RAGU · [2차] 실무자 합의", apply: ["2/05","3/01","3/03"], deep: T6.gr, bold: true },
+  { id: "T07", name: "LightRAG 증분 업데이트", quad: "시험", layer: "knowledge", seen: "2025-10", gist: "엔티티-관계 그래프 + 저수준/고수준 이중 검색 + 증분 갱신. \"61만 토큰 vs 100 미만\"은 2차 요약", ev: "[2차]", apply: ["2/05","2/07"], deep: T6.gr },
+  { id: "T08", name: "HippoRAG 2 · RAGU 재분석", quad: "시험", layer: "reasoning", seen: "2026-07", gist: "장황 프롬프트의 우위는 포맷 효과. 포맷 통제 후 MuSiQue에서만 뚜렷(54.4 vs 40.1)", ev: "[검증] arXiv 2607.11683", apply: ["2/05","3/01","3/13"], deep: T6.gr },
+  { id: "T09", name: "컨텍스트 엔지니어링", quad: "시험", layer: "reasoning", seen: "2025-10", gist: "\"무엇을 넣고 뺄지\"의 공학 — 선택·압축·구조화·예산. ADK 등 프레임워크가 1급 기능으로 흡수. 방법론 효과는 [2차]", ev: "[검증] Lost in the Middle·RULER(기반) · [벤더] ADK · [2차]", apply: ["3/08","3/04","3/03","5/02"], deep: T6.ce, bold: true },
+  { id: "T10", name: "에이전트 메모리 생태계", quad: "관찰", layer: "reasoning", seen: "2025-10", gist: "대화 컨텍스트용 / 운영 지식용으로 분화. 벤치마크 표준화 보고(벤더 발)와 역결과(MemTrapBench) 공존", ev: "[벤더] Mem0 · [2차]", apply: ["3/08","3/13"], deep: T6.mem, bold: true },
+  { id: "T11", name: "LoCoMo · LongMemEval · BEAM 표준화", quad: "관찰", layer: "reasoning", seen: "2026", gist: "메모리 평가의 표준이라는 보고. 메모리 벤더 발, 원 논문 미기록", ev: "[벤더]", apply: ["3/08","1/06"], deep: T6.mem },
+  { id: "T12", name: "MemTrapBench 교훈 — no-memory 베이스라인", quad: "시험", layer: "reasoning", seen: "2026", gist: "메모리 프레임워크 5종 모두 no-memory보다 나쁨. 평가 기준점을 \"메모리 vs 없음\"으로. 원칙은 즉시 적용, 결과는 원문 확인 전", ev: "[2차]", apply: ["3/08","3/13"], deep: T6.mem },
+  { id: "T13", name: "메모리 프레임워크 기본 도입", quad: "보류", layer: "reasoning", seen: "2026", gist: "멀티세션 요구 확인·no-memory 대비 [실측] 없이 메모리 프레임워크를 넣는 것. 99 매트릭스 \"피해야 할 조합\"", ev: "[2차] 역결과", apply: ["3/08"], deep: T6.mem },
+  { id: "T14", name: "에이전트 프로토콜 수렴", quad: "시험", layer: "interaction", seen: "2025-06", gist: "MCP(툴) · A2A(에이전트 간) · AG-UI(이벤트) · A2UI(UI 내용) · MCP Apps(툴 UI)가 경쟁에서 경계별 조합으로. \"당사자 둘 이상인 경계에만\"", ev: "[2차]", apply: ["1/05","3/07","3/09","4/02"], deep: T6.pr, bold: true },
+  { id: "T15", name: "MCP 2026-07-28 개정", quad: "시험", layer: "reasoning", seen: "2026-07", gist: "RC 05-21 → 최종 07-28. 무상태 코어(세션 ID 제거), Multi Round-Trip, Tasks, Apps 확장. \"툴 프로토콜\"에서 \"에이전트 런타임 프로토콜\"로", ev: "[2차] 공식 changelog 재확인 권장", apply: ["3/09","3/07","4/02"], deep: T6.pr },
+  { id: "T16", name: "A2A Linux Foundation 이관", quad: "시험", layer: "reasoning", seen: "2025-06", gist: "Google 소유 → LF, 100+ 기업. 조직 간 연동의 벤더 중립 선택지. 1.0은 정황만", ev: "[2차] 복수 소스 일치", apply: ["3/07","1/05"], deep: T6.pr },
+  { id: "T17", name: "AG-UI 대형 벤더 지원", quad: "시험", layer: "interaction", seen: "2026-03", gist: "AWS Bedrock AgentCore(2026-03) · Microsoft .NET SDK(2026-09-25) · ThoughtWorks Radar. 거버넌스는 CopilotKit 단일 스타트업", ev: "[2차] [벤더]", apply: ["4/02","4/04","4/07"], deep: T6.pr },
+  { id: "T18", name: "A2UI v0.9", quad: "관찰", layer: "interaction", seen: "2026-04", gist: "선언적 UI 트리(JSON). \"Standard\" → \"Basic\" 개명, Agent SDK, Android Jetpack. 모바일 네이티브 렌더 주장, 호환성 파괴 변경 진행 중", ev: "[벤더]", apply: ["4/02","4/07"], deep: T6.gui },
+  { id: "T19", name: "MCP Apps", quad: "관찰", layer: "interaction", seen: "2026-01", gist: "MCP 서버가 HTML UI 반환, 호스트가 샌드박스 iframe 렌더. 2026-07 MCP 확장으로 편입. 기본값은 \"수용하지 않음\"", ev: "[2차]", apply: ["4/02","4/08","3/09"], deep: T6.gui },
+  { id: "T20", name: "Generative UI 3패턴", quad: "시험", layer: "interaction", seen: "2026-01", gist: "Controlled / Declarative / Open-ended, 각각 AG-UI / A2UI / MCP Apps. Controlled가 사실상 기본값 — 어휘는 채택, 프레이밍 출처는 AG-UI 주도사", ev: "[2차] CopilotKit 프레이밍 · [벤더]", apply: ["4/01","4/03","4/05","4/06","4/10"], deep: T6.gui, bold: true },
+  { id: "T21", name: "Late chunking", quad: "시험", layer: "knowledge", seen: "2025-04", seenLabel: "2025-04 (비교 연구)", gist: "장문 임베딩 후 분할. 효율↑ 관련성·완결성↓. 인덱싱 비용 제약 + 장문 임베딩 모델일 때만 조건부, 관련성 저하는 [실측]", ev: "[검증] arXiv 2504.19754", apply: ["2/02"], deep: T6.ce },
+  { id: "T22", name: "Contextual retrieval", quad: "시험", layer: "knowledge", seen: "2025-04", seenLabel: "2025-04 (비교 연구)", gist: "청크 앞에 문서 맥락 1문장 접두. 의미 일관성↑ 계산 비용↑. 출처 혼동 + 인덱싱 예산 있을 때", ev: "[검증] 2504.19754 · 원형 [벤더] Anthropic", apply: ["2/02"], deep: T6.ce },
+  { id: "T23", name: "하이브리드 검색 기본값화", quad: "채택", layer: "knowledge", seen: "2025-10", gist: "BM25 + dense + RRF(+ cross-encoder)가 단독보다 우수하다는 보고 누적. 2/04 · 3/03의 기본값. 각 요소를 끄고 켜며 [실측]하기 쉬움", ev: "[2차] 누적 보고 — 유일하게 [검증] 없는 채택 항목", apply: ["2/04","3/03"], deep: T6.gr },
+  { id: "T24", name: "롱컨텍스트 ↔ RAG 보완 관계", quad: "채택", layer: "reasoning", seen: "2025-10", gist: "\"롱컨텍스트가 RAG를 대체\" 기각. 롱컨텍스트는 양, RAG는 선택. RULER 스트레스에서 중간 청크 누락 재현", ev: "[검증] 원 논문(Lost in the Middle·RULER) · [2차] 정리", apply: ["3/01","2/02","3/08"], deep: T6.ce },
+  { id: "T25", name: "OTel GenAI 컨벤션 저장소 분리", quad: "관찰", layer: "cross", seen: "2026-09", gist: "전 gen_ai.* 속성 Development 등급. v1.42.0에서 semantic-conventions-genai 분리, 태그 릴리스 없음. 자체 스키마 + 매핑 계층", ev: "[2차] 2026-06 \"안정화\" 1건은 레지스트리 미확인", apply: ["5/03","3/07"], deep: P["1/06"] },
+  { id: "T26", name: "프레임워크 재편", quad: "시험", layer: "reasoning", seen: "2026-03", gist: "Swarm → OpenAI Agents SDK · Claude Code SDK → Claude Agent SDK(hooks) · Google ADK 다언어(Java 1.0.0 2026-03) · AutoGen 유지보수. 기본값이 \"밖 모듈 먼저\"로", ev: "[2차]", apply: ["3/14","3/07","3/08"], deep: P["3/14"] },
+  { id: "T27", name: "AutoGen 신규 채택", quad: "보류", layer: "reasoning", seen: "2026", gist: "유지보수 모드 전환 → 신규 프로젝트 비권장. 99 매트릭스 \"피해야 할 조합\"", ev: "[2차]", apply: ["3/14"], deep: P["3/14"] },
+  { id: "T28", name: "Agentic RAG", quad: "시험", layer: "reasoning", seen: "2025-10", gist: "검색이 에이전트 루프 \"앞\"이 아니라 \"안\"으로 — 검색도 툴이며 신뢰 경계·스키마 규칙을 따른다", ev: "[2차]", apply: ["3/01","3/09"], deep: P["3/01"] },
+];
+
+// ---- 레이아웃 ----
+const QUADS = [
+  // 수학 각도(반시계, +x = 0°). SVG 변환 시 y 를 뒤집는다.
+  { key: "채택", a0: 90,  a1: 180, fill: "var(--q-adopt)", lx: 40,  ly: 36,  anchor: "start", sub: "기본값으로 쓴다 — [검증] 또는 [실측]" },
+  { key: "시험", a0: 0,   a1: 90,  fill: "var(--q-trial)", lx: 720, ly: 36,  anchor: "end",   sub: "조건 확인 후 PoC로 [실측]을 만든다" },
+  { key: "관찰", a0: 270, a1: 360, fill: "var(--q-watch)", lx: 720, ly: 736, anchor: "end",   sub: "추적하되 PoC 전 — [벤더]·[2차]뿐이거나 공개 직후" },
+  { key: "보류", a0: 180, a1: 270, fill: "var(--q-hold)",  lx: 40,  ly: 736, anchor: "start", sub: "현재 도입하지 않는다 — 역결과 또는 상태 종료" },
+];
+const CX = 380, CY = 380, R = 330, R_MIN = 70;
+const T_MIN = ym("2025-04"), T_MAX = ym("2026-10");   // first_seen 범위(가장 이른 비교 연구 ~ 작성 시점)
+function ym(s) { const [y, m] = s.split("-").map(Number); return y * 12 + ((m || 7) - 1); }  // 월 미기록 → 7월로 간주
+function layerColor(l) { return l === "knowledge" ? "var(--knowledge)" : l === "reasoning" ? "var(--reasoning)" : l === "interaction" ? "var(--interaction)" : "var(--cross)"; }
+function layerName(l) { return l === "knowledge" ? "Knowledge" : l === "reasoning" ? "Reasoning / Action" : l === "interaction" ? "Interaction" : "Cross-cutting"; }
+// 초기 위치: 분면 안에서 각도는 first_seen 순으로 균등, 반지름은 first_seen(최근일수록 중심).
+// 같은 달 항목이 뭉치므로 결정론적 반발 패스로 최소 간격을 확보하고, 분면 부채꼴 안에 가둔다.
+const MIN_GAP = 30, LAYOUT = {};
+(function layout() {
+  QUADS.forEach(q => {
+    const group = ITEMS.filter(x => x.quad === q.key).sort((a, b) => ym(a.seen) - ym(b.seen) || a.id.localeCompare(b.id));
+    const n = group.length, margin = 8, span = (q.a1 - q.a0) - margin * 2;
+    group.forEach((it, i) => {
+      const ang = q.a0 + margin + span * (i + 0.5) / n;
+      const t = (ym(it.seen) - T_MIN) / (T_MAX - T_MIN);          // 0 = 오래됨, 1 = 최근
+      // 항목이 많은 분면은 반지름을 번갈아 띄워 이웃 라벨이 같은 반지름에 놓이지 않게 한다
+      const r = R_MIN + (1 - t) * (R - R_MIN - 22) + (n > 6 ? (i % 2 ? 14 : -14) : 0);
+      LAYOUT[it.id] = { x: CX + r * Math.cos(ang * Math.PI / 180), y: CY - r * Math.sin(ang * Math.PI / 180), q };
+    });
+    // 반발 패스
+    for (let iter = 0; iter < 80; iter++) {
+      let moved = false;
+      for (let a = 0; a < n; a++) for (let b = a + 1; b < n; b++) {
+        const A = LAYOUT[group[a].id], B = LAYOUT[group[b].id];
+        let dx = B.x - A.x, dy = B.y - A.y, d = Math.hypot(dx, dy);
+        if (d < MIN_GAP) {
+          if (d < 0.01) { dx = 1; dy = 0; d = 1; }
+          const push = (MIN_GAP - d) / 2 / d;
+          A.x -= dx * push; A.y -= dy * push; B.x += dx * push; B.y += dy * push; moved = true;
+        }
+      }
+      // 부채꼴 안으로 클램프 (반지름·각도)
+      group.forEach(it => {
+        const L = LAYOUT[it.id];
+        let r = Math.hypot(L.x - CX, CY - L.y), ang = Math.atan2(CY - L.y, L.x - CX) * 180 / Math.PI;
+        if (ang < 0) ang += 360;
+        r = Math.max(R_MIN + 6, Math.min(R - 22, r));
+        ang = Math.max(q.a0 + margin, Math.min(q.a1 - margin, ang));
+        L.x = CX + r * Math.cos(ang * Math.PI / 180); L.y = CY - r * Math.sin(ang * Math.PI / 180);
+      });
+      if (!moved) break;
+    }
+  });
+})();
+function pos(item) {
+  const L = LAYOUT[item.id];
+  let ang = Math.atan2(CY - L.y, L.x - CX) * 180 / Math.PI; if (ang < 0) ang += 360;
+  return { x: L.x, y: L.y, ang };
+}
+
+// ---- 렌더 ----
+const svg = document.getElementById("radar"), NS = "http://www.w3.org/2000/svg";
+const tip = document.getElementById("tip"), list = document.getElementById("list");
+const hidden = new Set();   // 숨긴 레이어
+function el(name, attrs, parent) { const e = document.createElementNS(NS, name); for (const k in attrs) e.setAttribute(k, attrs[k]); (parent || svg).appendChild(e); return e; }
+function text(x, y, str, cls, parent, anchor) { const t = el("text", { x, y, class: cls || "", "text-anchor": anchor || "start" }, parent); t.textContent = str; return t; }
+function arc(a0, a1) {  // 사분면 부채꼴 경로
+  const p = a => [CX + R * Math.cos(a * Math.PI / 180), CY - R * Math.sin(a * Math.PI / 180)];
+  const [x0, y0] = p(a0), [x1, y1] = p(a1);
+  return `M${CX},${CY} L${x0},${y0} A${R},${R} 0 0 0 ${x1},${y1} Z`;
+}
+function drawBase() {
+  QUADS.forEach(q => {
+    el("path", { d: arc(q.a0, q.a1), fill: q.fill, stroke: "none" });
+    const n = ITEMS.filter(x => x.quad === q.key).length;
+    text(q.lx, q.ly, `${q.key}  ·  ${n}`, "qlabel", null, q.anchor).setAttribute("fill", "currentColor");
+    text(q.lx, q.ly + 16, q.sub, "qsub", null, q.anchor);
+  });
+  [R, (R + R_MIN) / 2, R_MIN].forEach(r => el("circle", { cx: CX, cy: CY, r, class: "ring" }));
+  el("line", { x1: CX - R, y1: CY, x2: CX + R, y2: CY, class: "axis" });
+  el("line", { x1: CX, y1: CY - R, x2: CX, y2: CY + R, class: "axis" });
+  text(CX + 6, CY - R_MIN - 4, "중심 ← 최근 first_seen", "rnote");
+  text(CX + 6, CY + R - 6, "바깥 → 2025-04 (가장 이른 비교 연구)", "rnote");
+}
+function tipHtml(it) {
+  return `<b>${it.id} · ${it.name}${it.star ? " ★" : ""}</b>` +
+    `<span class="k">분면</span> ${it.quad} · <span class="k">레이어</span> ${layerName(it.layer)} · <span class="k">first_seen</span> ${it.seenLabel || it.seen}<br>` +
+    `${it.gist}<br><span class="k">검증</span> ${it.ev}<br><span class="k">심화</span> ${it.deep}`;
+}
+function showTip(it, x, y) { tip.innerHTML = tipHtml(it); tip.style.left = Math.min(x + 12, window.innerWidth - 380) + "px"; tip.style.top = (y + 12) + "px"; tip.style.opacity = 1; }
+function hideTip() { tip.style.opacity = 0; }
+function hl(id, on) {
+  document.querySelectorAll(`[data-id="${id}"]`).forEach(e => e.classList.toggle("hl", on));
+}
+function drawDots() {
+  ITEMS.forEach(it => {
+    const { x, y, ang } = pos(it);
+    const g = el("g", { class: "dot" + (it.star ? " star" : ""), "data-id": it.id, tabindex: 0, role: "link", "aria-label": `${it.id} ${it.name}, ${it.quad}, ${it.seenLabel || it.seen}` });
+    el("circle", { cx: x, cy: y, r: 7, fill: layerColor(it.layer) }, g);
+    // 라벨은 바깥쪽으로
+    const rad = ang * Math.PI / 180, lx = x + 13 * Math.cos(rad), ly = y - 13 * Math.sin(rad) + 3.5;
+    text(lx, ly, it.id, "", g, Math.cos(rad) < -0.2 ? "end" : Math.cos(rad) > 0.2 ? "start" : "middle");
+    const go = () => { window.location.href = BASE + it.deep; };
+    g.addEventListener("click", go);
+    g.addEventListener("keydown", e => { if (e.key === "Enter") go(); });
+    g.addEventListener("mousemove", e => { showTip(it, e.clientX, e.clientY); hl(it.id, true); });
+    g.addEventListener("mouseleave", () => { hideTip(); hl(it.id, false); });
+    g.addEventListener("focus", () => { const b = g.getBoundingClientRect(); showTip(it, b.left + b.width, b.top); hl(it.id, true); });
+    g.addEventListener("blur", () => { hideTip(); hl(it.id, false); });
+  });
+}
+function drawList() {
+  list.innerHTML = "";
+  QUADS.forEach(q => {
+    const items = ITEMS.filter(x => x.quad === q.key).sort((a, b) => a.id.localeCompare(b.id));
+    const h = document.createElement("h2"); h.innerHTML = `${q.key} <small>· ${items.length}개 — ${q.sub}</small>`; list.appendChild(h);
+    items.forEach(it => {
+      const row = document.createElement("div"); row.className = "row"; row.dataset.id = it.id; row.dataset.layer = it.layer; row.style.setProperty("--lc", layerColor(it.layer));
+      const id = document.createElement("div"); id.className = "id"; id.textContent = it.id;
+      const body = document.createElement("div");
+      const name = document.createElement("div"); name.className = "name";
+      const a = document.createElement("a"); a.href = BASE + it.deep; a.textContent = (it.bold ? "" : "") + it.name + (it.star ? " ★" : ""); if (it.bold) a.style.fontWeight = "700";
+      name.appendChild(a);
+      const meta = document.createElement("div"); meta.className = "meta"; meta.innerHTML = `${layerName(it.layer)} · first_seen ${it.seenLabel || it.seen} · <code>${it.ev.replace(/</g, "&lt;")}</code>`;
+      const apply = document.createElement("div"); apply.className = "apply";
+      it.apply.forEach(c => { const x = document.createElement("a"); x.href = BASE + P[c]; x.textContent = c; x.title = P[c]; apply.appendChild(x); });
+      body.append(name, meta, apply); row.append(id, body);
+      row.addEventListener("mouseenter", () => hl(it.id, true));
+      row.addEventListener("mouseleave", () => hl(it.id, false));
+      list.appendChild(row);
+    });
+  });
+}
+function applyFilter() {
+  document.querySelectorAll(".dot, .row").forEach(e => {
+    const it = ITEMS.find(x => x.id === e.dataset.id);
+    e.classList.toggle("dim", hidden.has(it.layer));
+  });
+}
+document.querySelectorAll("#legend button[data-layer]").forEach(b => {
+  b.addEventListener("click", () => { const l = b.dataset.layer; if (hidden.has(l)) hidden.delete(l); else hidden.add(l); b.classList.toggle("off", hidden.has(l)); applyFilter(); });
+});
+drawBase(); drawDots(); drawList();
+</script>
+</body>
+</html>

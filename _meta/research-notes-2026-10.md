@@ -68,6 +68,27 @@
 - RAGAS: context precision/recall, faithfulness, answer relevancy. judge 정렬 가이드 제공. 전용 OTel 계측기 없음(수동 스팬). judge JSON 파싱 실패 → NaN이 집계에서 조용히 제외 → `[2차]`
 - Datadog: Ragas 평가 자동 트레이싱, 샘플링 권고 → `[벤더]`
 
+## 추가 조사 필요 (집필 중 확인된 공백)
+
+본문 작성 시 노트만으로 서술이 부족했던 항목. 다음 조사 라운드에서 1차 출처를 확인해 위 절에 반영하고, 해당 페이지의 검증 수준을 갱신한다.
+
+| 항목 | 현재 처리 | 확인할 것 | 영향 페이지 |
+|---|---|---|---|
+| HippoRAG 2 원 논문 | RAGU 재분석(2607.11683)만 인용 | 원 논문 arXiv 번호, PPR 메커니즘 세부 | 2/05, 3/01, 6/graphrag |
+| LoCoMo / LongMemEval / BEAM 원 논문 | Mem0 보고 `[벤더]`로만 | 각 벤치마크 원 출처·측정 조건 | 3/08, 6/agent-memory |
+| MemTrapBench | `[2차]`, 측정 조건 미확인 | 원 출처, 5개 프레임워크 목록, 과업 유형 | 3/08, 6/agent-memory |
+| MCP 2026-07-28 개정 세부 | 2차 해설 기반 | 공식 changelog(modelcontextprotocol.io)에서 무상태·Multi Round-Trip·Tasks·Apps 최종 사양 | 1/05, 3/09, 6/protocols |
+| A2A 1.0 | A2UI 통합 언급으로만 정황 | 공식 릴리스 발표 유무·일자 | 1/05, 3/07 |
+| AG-UI 이벤트 정확한 이름·필드, 상태 패치가 JSON Patch(RFC 6902)인지 | 범주만 서술 | 스펙 현재 버전 | 4/02, 4/04 |
+| Generative UI 효과의 독립 측정 | 벤더 일반 주장 | 과업 완료율·수정률 등 독립 연구 유무 | 4/01, 4/10, 6/generative-ui |
+| first_seen 월 단위 | context-engineering·agent-memory는 2025-10으로 잠정 | 각 트렌드가 각광받기 시작한 월 | 6/*, 0/03 |
+| 한국어 성능 | Jev 영어 중심 외 근거 없음 | 임베딩·리랭커·NLI·결정 모델의 한국어 벤치마크 | 2/04, 3/02~04, 3/11 |
+| 결정 모델 독립 벤치마크 | 없음 | LangChain 테스트 1건 외 독립 측정 등장 여부 | 1/02, 3/11, 6/decision-models |
+| 뉴로심볼릭 벤더 자료(o9 Solutions, Kognitos) | Part 1/04 참고 문헌에만 `[벤더]` | 노트에 정식 등재할지 또는 제거할지 | 1/04, 6/neuro-symbolic |
+| Ontology Summit 2026 산업 세션 | Part 1/04에만 언급, 노트 미등재 | 세션 자료 공개 여부 | 1/04 |
+| Part 3B·5가 `[검증]`으로 인용한 1차 자료 (Greshake 2023 간접 인젝션, Guo 2017 ECE, Gao 2022 PAL, Willison 2023 이중 LLM, OWASP LLM Top 10, BFCL) | 널리 알려진 1차 자료라 `[검증]` 표기 | 노트에 정식 등재(arXiv 번호·버전) | 3/10, 3/11, 3/13, 5/01 |
+| EU AI Act 조항·시행일 | 일반 구조만, 법무 검토 사항으로 | 적용 시점·GPAI 의무 세부 | 5/04 |
+
 ## 인용 금지·주의
 
 - 출처 불명 퍼센트(예: "GraphRAG 86% vs 32%", "에이전트 80% 더 진실") → 인용 금지

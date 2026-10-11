@@ -24,9 +24,9 @@ updated: 2026-10-11
 |---|---|---|---|
 | [온톨로지 르네상스 ★](ontology-renaissance.md) | GraphRAG의 한계(임베딩+탐색에 머묾) 비판과 함께, 온톨로지로 에이전트를 접지하는 흐름. Gartner NSAI 벤더 식별(2026-04, 벤더 보고) | 시험 | P2/05·06·08, P3/10, P4/05, P5/04 |
 | [뉴로심볼릭 ★](neuro-symbolic.md) | LLM 출력을 규칙·제약·추론기로 검증하는 2단계 구성이 기업 적용 사례로 보고됨 | 시험 | P2/09, P3/04·10·12 |
-| [결정 모델: Jev와 Decisions API ★](decision-models.md) | 생성 대신 타입드 판정만 반환하는 모델. Jev(TypeSafe, 2026-09-15 EA, 비자기회귀 전용 모델)와 OpenAI Decisions API(2026-09-29 발표, gpt-6-luna 기반 제약 출력). 라우팅·게이팅·분류의 새 기본값 후보 | 관찰 → 시험 | P2/09, P3/02·11·12, P4/05, P5/02 |
+| [결정 모델: Jev와 Decisions API ★](decision-models.md) | 생성 대신 타입드 판정만 반환하는 모델. Jev(TypeSafe, 2026-09-15 EA, 비자기회귀 전용 모델)와 OpenAI Decisions API(2026-09-29 발표, gpt-6-luna 기반 제약 출력). 라우팅·게이팅·분류의 새 기본값 후보 | 관찰 (한국어 PoC 시작 시 시험) | P2/09, P3/02·11·12, P4/05, P5/02 |
 | [GraphRAG의 진화](graphrag-evolution.md) | GraphRAG → LightRAG(증분, 저비용) → HippoRAG 2(PPR 기반 연상 검색). 벤치마크 우위가 포맷 효과라는 재분석 등장 | 시험 | P2/05, P3/01·03 |
-| [컨텍스트 엔지니어링](context-engineering.md) | 프롬프트 엔지니어링에서 "무엇을 컨텍스트에 넣고 뺄지"의 공학으로. ADK 등 프레임워크 레벨 지원 | 채택 후보 | P3/08 |
+| [컨텍스트 엔지니어링](context-engineering.md) | 프롬프트 엔지니어링에서 "무엇을 컨텍스트에 넣고 뺄지"의 공학으로. ADK 등 프레임워크 레벨 지원 | 시험 (`[실측]` 전까지) | P3/08 |
 | [에이전트 메모리 생태계](agent-memory.md) | 대화용 vs 운영지식용으로 분화. LoCoMo/LongMemEval 표준화. no-memory보다 나쁠 수 있다는 벤치마크 | 관찰 | P3/08 |
 | [에이전트 프로토콜 수렴](agentic-protocols-convergence.md) | MCP(툴) · A2A(에이전트 간) · AG-UI(프론트-백) · A2UI(선언적 UI) · MCP Apps(샌드박스 앱)로 역할 분담 | 시험 | P1/05, P3/07·09, P4/02 |
 | [Generative UI](generative-ui.md) | Controlled / Declarative / Open-ended 3패턴 정착, 모바일 렌더러 확산 | 시험 | P4 전체 |

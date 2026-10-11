@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Part 4. Agent 기반 동적 UI 연동 — 전체 흐름</title>
+<style>
+  /* 레이어 색상은 작성 가이드 7절과 동일하게 고정 */
+  :root {
+    --bg: #fafaf8; --fg: #1d1d1b; --muted: #6b6b6b; --line: #d9d9d4; --card: #ffffff;
+    --knowledge: #2E7D6B; --reasoning: #3A5FA8; --interaction: #B5651D; --cross: #6B6B6B;
+    --trend: #8E44AD;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #15161a; --fg: #ececea; --muted: #9a9a95; --line: #33353b; --card: #1e2026; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.5 -apple-system, "Pretendard", "Noto Sans KR", system-ui, sans-serif; }
+  header { padding: 20px 28px 8px; }
+  header h1 { margin: 0 0 4px; font-size: 20px; font-weight: 650; }
+  header p { margin: 0; color: var(--muted); }
+  .legend { display: flex; gap: 16px; flex-wrap: wrap; padding: 8px 28px 0; color: var(--muted); font-size: 12px; }
+  .legend span::before { content: ""; display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: -1px; background: var(--c); }
+  .legend span.dash::before { background: transparent; border: 2px dashed var(--trend); width: 8px; height: 8px; }
+  .wrap { padding: 12px 28px 28px; }
+  svg { width: 100%; height: auto; display: block; }
+  .band { fill: var(--card); stroke: var(--line); }
+  .band-label { font-size: 13px; font-weight: 700; letter-spacing: .02em; }
+  .band-sub { font-size: 11px; fill: var(--muted); }
+  .node { cursor: pointer; }
+  .node rect { fill: var(--card); stroke-width: 1.5; rx: 6; }
+  .node text { font-size: 12px; fill: var(--fg); pointer-events: none; }
+  .node .idx { font-size: 10px; fill: var(--muted); }
+  .node .sub { font-size: 10px; fill: var(--muted); }
+  .node:hover rect, .node:focus rect { filter: brightness(0.96); stroke-width: 2.5; outline: none; }
+  .node.trend rect { stroke-dasharray: 4 3; }
+  .flow { stroke: var(--muted); stroke-width: 1.5; fill: none; marker-end: url(#arrow); }
+  .flow.back { stroke-dasharray: 5 4; }
+  .flow-label { font-size: 11px; fill: var(--muted); }
+  .contract { fill: var(--bg); stroke: var(--line); rx: 4; }
+  .contract-text { font-size: 11px; fill: var(--fg); }
+  .side-title { font-size: 11px; fill: var(--muted); font-weight: 600; }
+  #tip { position: fixed; pointer-events: none; background: var(--fg); color: var(--bg); padding: 6px 10px; border-radius: 6px; font-size: 12px; max-width: 340px; opacity: 0; transition: opacity .1s; z-index: 10; }
+  footer { padding: 0 28px 24px; color: var(--muted); font-size: 12px; }
+  footer a { color: inherit; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Part 4. Agent 기반 동적 UI 연동 — 전체 흐름</h1>
+  <p>에이전트 응답이 UI가 되어 사용자에게 가고, 사용자 이벤트가 검증을 거쳐 에이전트 상태 머신으로 돌아오는 루프. 노드를 클릭하면 해당 위키 페이지로 이동합니다. 점선 테두리는 트렌드 세 축(결정 모델·온톨로지·뉴로심볼릭)이 들어가는 자리입니다.</p>
+</header>
+<div class="legend">
+  <span style="--c: var(--interaction)">Interaction — Part 4 단계</span>
+  <span style="--c: var(--reasoning)">Reasoning / Action — Part 3 (경계)</span>
+  <span style="--c: var(--knowledge)">Knowledge — Part 2 (계약 ① citation)</span>
+  <span style="--c: var(--cross)">Cross-cutting — 보안·관측</span>
+  <span class="dash">트렌드 세 축 적용점</span>
+</div>
+<div class="wrap">
+<svg id="arch" viewBox="0 0 1240 640" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Part 4 동적 UI 연동 전체 흐름">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#6b6b6b"/>
+    </marker>
+  </defs>
+</svg>
+</div>
+<div id="tip"></div>
+<footer>
+  레이어 간 계약: ① 근거 단위(citation) — <a href="../../02-data-pipeline/08-grounding-data-design.md">Part 2/08</a> · ② 렌더 가능한 응답(텍스트 + citations + ui_intent) — <a href="../../04-dynamic-ui/03-component-registry-schema.md">Part 4/03</a> · ③ 사용자 이벤트 — <a href="../../04-dynamic-ui/04-streaming-state-sync.md">Part 4/04</a>. 단계 요약은 <a href="../../04-dynamic-ui/00-overview.md">Part 4 개요</a>, 선택 종합은 <a href="../../04-dynamic-ui/99-decision-matrix.md">결정 매트릭스</a>. 스트리밍 시퀀스는 <a href="genui-streaming-sequence.html">genui-streaming-sequence.html</a>.
+</footer>
+
+<script>
+// ---- 데이터 (링크는 assets/html/ 기준 상대 경로) ----
+const BASE = "../../";
+const P4 = "04-dynamic-ui/";
+
+// 내려가는 흐름 (에이전트 → 사용자): 상단 행
+const DOWN = [
+  { t: "에이전트 응답", sub: "계약 ② 응답 스키마", i: "3/04", d: "Part 3가 넘기는 렌더 가능한 응답(계약 ②). citation은 Part 2/08 스키마", href: "03-agent-workflow-rag/04-generation-grounding.md", color: "var(--reasoning)" },
+  { t: "의도 → UI 매핑", sub: "규칙 · 온톨로지 · 결정 모델", i: "4/05", d: "어느 컴포넌트를 띄울지 판정. 행동 의도는 규칙 고정, 확신도 낮으면 텍스트 폴백", href: P4 + "05-intent-to-ui-mapping.md", trend: true },
+  { t: "컴포넌트 레지스트리 조회", sub: "name · props · bindings", i: "4/03", d: "에이전트가 알아도 되는 UI의 전부. 단일 원본에서 타입·툴 정의·검증기 생성", href: P4 + "03-component-registry-schema.md" },
+  { t: "스키마 · 제약 검증", sub: "필수 · 허용 조합 · 권한", i: "4/03·08", d: "뉴로심볼릭 검증기 패턴. 불합격이면 폴백 체인 → 마지막은 텍스트", href: P4 + "08-security-sandboxing.md", trend: true },
+  { t: "AG-UI 이벤트 스트림", sub: "델타 · 툴 호출 · 상태 패치", i: "4/02·04", d: "SSE 기반 타입드 이벤트. 전송층은 AG-UI 또는 프레임워크 내장, 내용층은 레지스트리 또는 A2UI", href: P4 + "04-streaming-state-sync.md" },
+  { t: "렌더러", sub: "웹(React) · 모바일(A2UI)", i: "4/07", d: "레지스트리 바인딩 계층이 이름을 컴포넌트로. 모르는 이름·버전 불일치는 텍스트 폴백", href: P4 + "07-frontend-integration.md" },
+];
+// 올라가는 흐름 (사용자 → 에이전트): 하단 행 (오른쪽에서 왼쪽)
+const UP = [
+  { t: "사용자 이벤트", sub: "승인 · 수정 · 선택 · 피드백", i: "4/06", d: "HITL 패턴마다 이벤트 유형 하나. 승인 카드는 행동·영향 범위·근거·가역성을 카드 안에", href: P4 + "06-hitl-ui-patterns.md" },
+  { t: "서버 재검증", sub: "스키마·권한·상태·멱등·정책", i: "4/04·08", d: "사용자 이벤트는 신뢰 경계를 넘는 외부 입력. 프론트 주장(user·보였음)을 믿지 않는다", href: P4 + "08-security-sandboxing.md", trend: true },
+  { t: "에이전트 상태 머신", sub: "검증된 이벤트만 전이 입력", i: "3/12·08", d: "검증 통과한 이벤트만 상태 전이 입력(계약 ③). 정책 게이트는 Part 3/12", href: "03-agent-workflow-rag/12-guardrails-hitl.md", color: "var(--reasoning)" },
+];
+// 횡단 (오른쪽 세로 바)
+const SIDE = [
+  { t: "통제 수준 결정", sub: "3패턴 중 선택", i: "4/01", d: "Part 4의 첫 결정. 기본값은 Controlled", href: P4 + "01-generative-ui-spectrum.md" },
+  { t: "프로토콜 선택", sub: "AG-UI · A2UI · MCP Apps", i: "4/02", d: "전송층 · 내용층 · 서드파티 UI를 따로 결정", href: P4 + "02-protocols-ag-ui-a2ui-mcp-apps.md" },
+  { t: "UX · 접근성", sub: "일관성 · 상태 · ARIA", i: "4/09", d: "같은 의도에 같은 UI. 생성 트리는 런타임 접근성 검증", href: P4 + "09-ux-accessibility.md" },
+  { t: "평가", sub: "정확도 · 실패율 · 완료율", i: "4/10", d: "골든셋(의도 → 기대 컴포넌트), 수정률·무시율·폴백률, 층화 A/B", href: P4 + "10-evaluation-genui.md" },
+  { t: "결정 매트릭스", sub: "변수 × 단계 × 시나리오", i: "4/99", d: "한 장 요약. 기본값은 가장 보수적인 선택", href: P4 + "99-decision-matrix.md" },
+];
+
+// ---- 렌더 ----
+const svg = document.getElementById("arch");
+const NS = "http://www.w3.org/2000/svg";
+const tip = document.getElementById("tip");
+
+function el(name, attrs, parent) {
+  const e = document.createElementNS(NS, name);
+  for (const k in attrs) e.setAttribute(k, attrs[k]);
+  (parent || svg).appendChild(e);
+  return e;
+}
+function text(x, y, str, cls, parent, anchor) {
+  const t = el("text", { x, y, class: cls || "", "text-anchor": anchor || "start" }, parent);
+  t.textContent = str; return t;
+}
+function node(n, x, y, w, h, color) {
+  const g = el("g", { class: "node" + (n.trend ? " trend" : ""), tabindex: "0", role: "link" });
+  el("rect", { x, y, width: w, height: h, stroke: n.trend ? "var(--trend)" : (n.color || color) }, g);
+  if (n.i) text(x + 8, y + 14, n.i, "idx", g);
+  text(x + 8, y + 32, n.t, "", g);
+  if (n.sub) text(x + 8, y + 48, n.sub, "sub", g);
+  const go = () => { window.location.href = BASE + n.href; };
+  g.addEventListener("click", go);
+  g.addEventListener("keydown", e => { if (e.key === "Enter") go(); });
+  g.addEventListener("mousemove", e => { tip.textContent = n.d + "  →  " + n.href; tip.style.left = (e.clientX + 12) + "px"; tip.style.top = (e.clientY + 12) + "px"; tip.style.opacity = 1; });
+  g.addEventListener("mouseleave", () => tip.style.opacity = 0);
+  return { g, x, y, w, h };
+}
+function flow(x1, y1, x2, y2, back, label, lx, ly) {
+  el("path", { d: `M${x1},${y1} L${x2},${y2}`, class: "flow" + (back ? " back" : "") });
+  if (label) {
+    const g = el("g", {});
+    const tw = label.length * 6.4 + 16;
+    el("rect", { x: lx - tw / 2, y: ly - 11, width: tw, height: 20, class: "contract" }, g);
+    text(lx, ly + 3, label, "contract-text", g, "middle");
+  }
+}
+
+// 메인 밴드 (Interaction)
+const BX = 40, BW = 960, BY = 60, BH = 470;
+el("rect", { x: BX, y: BY, width: BW, height: BH, class: "band", rx: 10 });
+el("rect", { x: BX, y: BY, width: 6, height: BH, fill: "var(--interaction)", rx: 3 });
+text(BX + 18, BY + 22, "Interaction Layer — Part 4", "band-label").setAttribute("fill", "var(--interaction)");
+text(BX + 18, BY + 40, "위 행: 에이전트 → 사용자 (렌더)   ·   아래 행: 사용자 → 에이전트 (이벤트 복귀)", "band-sub");
+
+// 상단 행
+const NW = 142, NH = 60, GAP = 14, PAD = 20;
+const topY = BY + 70;
+const downNodes = DOWN.map((n, k) => node(n, BX + PAD + k * (NW + GAP), topY, NW, NH, "var(--interaction)"));
+for (let k = 0; k < downNodes.length - 1; k++) {
+  const a = downNodes[k], b = downNodes[k + 1];
+  flow(a.x + a.w, a.y + NH / 2, b.x, b.y + NH / 2, false);
+}
+// 계약 ② 라벨 (에이전트 응답 → 매핑)
+(function(){ const a = downNodes[0]; text(a.x + a.w + 2, a.y - 8, "계약 ②", "flow-label"); })();
+
+// 사용자 (오른쪽 끝, 중간 높이)
+const UX = BX + PAD + 6 * (NW + GAP) + 10, UY = topY + NH + 50;
+(function () {
+  const g = el("g", { id: "user" });
+  el("circle", { cx: UX + 20, cy: UY - 8, r: 10, fill: "none", stroke: "#6b6b6b", "stroke-width": 1.5 }, g);
+  el("path", { d: `M${UX + 2},${UY + 24} a18,18 0 0 1 36,0`, fill: "none", stroke: "#6b6b6b", "stroke-width": 1.5 }, g);
+  text(UX + 20, UY + 42, "사용자", "flow-label", g, "middle");
+})();
+// 렌더러 → 사용자 (아래로 꺾임)
+(function () {
+  const r = downNodes[downNodes.length - 1];
+  const cx = r.x + r.w / 2;
+  el("path", { d: `M${cx},${r.y + NH} L${cx},${UY - 20} L${UX - 2},${UY - 20}`, class: "flow" });
+  text(cx + 6, r.y + NH + 28, "렌더된 UI", "flow-label");
+})();
+
+// 하단 행 (오른쪽에서 왼쪽으로)
+const botY = topY + NH + 150;
+const upNodes = UP.map((n, k) => node(n, BX + PAD + (5 - k) * (NW + GAP), botY, NW, NH, "var(--interaction)"));
+// 사용자 → 사용자 이벤트 (아래로 꺾여 들어감)
+(function () {
+  const u = upNodes[0];
+  const cx = u.x + u.w / 2;
+  el("path", { d: `M${UX - 2},${UY + 54} L${cx},${UY + 54} L${cx},${u.y}`, class: "flow back" });
+  text(cx + 6, u.y - 8, "클릭 · 입력 · 승인", "flow-label");
+})();
+for (let k = 0; k < upNodes.length - 1; k++) {
+  const a = upNodes[k], b = upNodes[k + 1];
+  flow(a.x, a.y + NH / 2, b.x + b.w, b.y + NH / 2, true);
+}
+// 계약 ③ 라벨
+(function(){ const a = upNodes[0]; text(a.x - 60, a.y - 8, "계약 ③ 사용자 이벤트", "flow-label"); })();
+// 상태 머신 → 에이전트 응답 (루프 닫기: 왼쪽으로 꺾여 위로)
+(function () {
+  const s = upNodes[upNodes.length - 1], a = downNodes[0];
+  const lx = BX + PAD - 8, ly = s.y + NH + 22;
+  el("path", { d: `M${s.x + s.w / 2},${s.y + NH} L${s.x + s.w / 2},${ly} L${lx},${ly} L${lx},${a.y + NH / 2} L${a.x - 2},${a.y + NH / 2}`, class: "flow back" });
+  text(lx + 10, ly - 6, "다음 run · 재생성 (상태 머신 → 에이전트)", "flow-label");
+})();
+
+// 하단 행 왼쪽 빈 자리: 보안·관측 메모 (Cross-cutting)
+(function () {
+  const x = BX + PAD, y = botY, w = NW * 2 + GAP, h = NH;
+  const g = el("g", { class: "node", tabindex: "0", role: "link" });
+  el("rect", { x, y, width: w, height: h, stroke: "var(--cross)" }, g);
+  text(x + 8, y + 14, "5/01 · 5/03", "idx", g);
+  text(x + 8, y + 32, "UI 경유 인젝션 · 트레이스", "", g);
+  text(x + 8, y + 48, "렌더 콘텐츠·이벤트는 데이터이지 지시가 아니다", "sub", g);
+  const href = "05-cross-cutting/01-security-prompt-injection.md";
+  const go = () => { window.location.href = BASE + href; };
+  g.addEventListener("click", go);
+  g.addEventListener("keydown", e => { if (e.key === "Enter") go(); });
+  g.addEventListener("mousemove", e => { tip.textContent = "출처 태그·구획 분리, UI 선택·렌더·이벤트를 스팬에 기록  →  " + href; tip.style.left = (e.clientX + 12) + "px"; tip.style.top = (e.clientY + 12) + "px"; tip.style.opacity = 1; });
+  g.addEventListener("mouseleave", () => tip.style.opacity = 0);
+})();
+
+// 계약 ① citation (Knowledge, 밴드 아래)
+(function () {
+  const y = BY + BH + 16;
+  const g = el("g", { class: "node", tabindex: "0", role: "link" });
+  const x = BX + PAD, w = 420, h = 40;
+  el("rect", { x, y, width: w, height: h, stroke: "var(--knowledge)" }, g);
+  text(x + 8, y + 14, "2/08", "idx", g);
+  text(x + 8, y + 30, "계약 ① 근거 단위(citation) 스키마 — UI는 그대로 렌더, 재해석하지 않는다", "", g);
+  const href = "02-data-pipeline/08-grounding-data-design.md";
+  const go = () => { window.location.href = BASE + href; };
+  g.addEventListener("click", go);
+  g.addEventListener("keydown", e => { if (e.key === "Enter") go(); });
+  g.addEventListener("mousemove", e => { tip.textContent = "출처·버전·시점·권한 태그·신뢰도 등급·하이라이트  →  " + href; tip.style.left = (e.clientX + 12) + "px"; tip.style.top = (e.clientY + 12) + "px"; tip.style.opacity = 1; });
+  g.addEventListener("mouseleave", () => tip.style.opacity = 0);
+  // 06 HITL(citation 렌더)로 올라가는 점선
+  const u = upNodes[0];
+  el("path", { d: `M${x + w},${y + h / 2} L${u.x + u.w / 2},${y + h / 2} L${u.x + u.w / 2},${u.y + NH}`, class: "flow back" });
+})();
+
+// 오른쪽 세로 바: 횡단 결정
+(function () {
+  const SX = 1040, SW = 160, SY = BY, SH = BH + 56;
+  el("rect", { x: SX, y: SY, width: SW, height: SH, class: "band", rx: 10 });
+  el("rect", { x: SX, y: SY, width: SW, height: 6, fill: "var(--interaction)", rx: 3 });
+  text(SX + 12, SY + 28, "설계 결정 · 횡단", "band-label").setAttribute("fill", "var(--interaction)");
+  text(SX + 12, SY + 46, "흐름 전체에 걸치는 페이지", "band-sub");
+  const h = 78, gap = 12, w = SW - 24;
+  SIDE.forEach((n, k) => node(n, SX + 12, SY + 62 + k * (h + gap), w, h, "var(--interaction)"));
+})();
+
+// 하단 범례
+text(BX, 626, "트렌드 세 축: 결정 모델(Jev · Decisions API) → 4/05 선택 판정   |   온톨로지 → 4/05 후보 좁히기 · 4/03 bindings   |   뉴로심볼릭 → 4/03·08 스키마·제약 검증, 4/04·08 서버 재검증 (Rule ∧ Model)", "band-sub");
+</script>
+</body>
+</html>

@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Generative UI 스트리밍 시퀀스 — 요청부터 승인·실행·완료까지</title>
+<style>
+  /* 레이어 색상은 작성 가이드 7절과 동일하게 고정 */
+  :root {
+    --bg: #fafaf8; --fg: #1d1d1b; --muted: #6b6b6b; --line: #d9d9d4; --card: #ffffff;
+    --knowledge: #2E7D6B; --reasoning: #3A5FA8; --interaction: #B5651D; --cross: #6B6B6B;
+    --trend: #8E44AD;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #15161a; --fg: #ececea; --muted: #9a9a95; --line: #33353b; --card: #1e2026; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.5 -apple-system, "Pretendard", "Noto Sans KR", system-ui, sans-serif; }
+  header { padding: 20px 28px 8px; }
+  header h1 { margin: 0 0 4px; font-size: 20px; font-weight: 650; }
+  header p { margin: 0; color: var(--muted); }
+  .legend { display: flex; gap: 16px; flex-wrap: wrap; padding: 8px 28px 0; color: var(--muted); font-size: 12px; }
+  .legend span::before { content: ""; display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: -1px; background: var(--c); }
+  .legend span.dash::before { background: transparent; border: 2px dashed var(--trend); width: 8px; height: 8px; }
+  .legend span.sse::before { background: transparent; border-radius: 50%; border: 2px solid var(--interaction); width: 7px; height: 7px; }
+  .wrap { padding: 12px 28px 28px; }
+  svg { width: 100%; height: auto; display: block; }
+  .head rect { fill: var(--card); stroke-width: 1.5; rx: 6; }
+  .head text { font-size: 12px; fill: var(--fg); pointer-events: none; }
+  .head .sub { font-size: 10px; fill: var(--muted); }
+  .head.trend rect { stroke-dasharray: 4 3; }
+  .head { cursor: pointer; }
+  .head:hover rect, .head:focus rect { stroke-width: 2.5; outline: none; }
+  .lifeline { stroke: var(--line); stroke-width: 1.5; stroke-dasharray: 4 4; }
+  .act { fill: var(--card); stroke: var(--line); }
+  .msg { cursor: pointer; }
+  .msg line { stroke: var(--fg); stroke-width: 1.4; marker-end: url(#arrow); }
+  .msg.async line { stroke-dasharray: 5 4; }
+  .msg.ret line { stroke: var(--muted); stroke-dasharray: 2 3; }
+  .msg text { font-size: 11px; fill: var(--fg); pointer-events: none; }
+  .msg .n { font-size: 9px; fill: var(--muted); }
+  .msg:hover line, .msg:focus line { stroke-width: 2.4; }
+  .msg:hover text, .msg:focus text { font-weight: 600; }
+  .msg:focus { outline: none; }
+  .sse-dot { fill: var(--bg); stroke: var(--interaction); stroke-width: 1.6; }
+  .self path { fill: none; stroke: var(--fg); stroke-width: 1.4; marker-end: url(#arrow); }
+  .phase rect { fill: var(--card); stroke: var(--line); rx: 6; }
+  .phase text { font-size: 11px; font-weight: 600; fill: var(--interaction); }
+  .phase .sub { font-weight: 400; fill: var(--muted); font-size: 10px; }
+  .note rect { fill: var(--bg); stroke: var(--line); stroke-dasharray: 3 3; rx: 4; }
+  .note text { font-size: 10px; fill: var(--muted); }
+  #tip { position: fixed; pointer-events: none; background: var(--fg); color: var(--bg); padding: 6px 10px; border-radius: 6px; font-size: 12px; max-width: 360px; opacity: 0; transition: opacity .1s; z-index: 10; }
+  footer { padding: 0 28px 24px; color: var(--muted); font-size: 12px; }
+  footer a { color: inherit; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Generative UI 스트리밍 시퀀스 — 요청 → 텍스트 델타 → 툴 호출 → 상태 패치 → UI → 승인 → 검증 → 실행 → 완료</h1>
+  <p>한 run이 흐르는 순서. 메시지를 클릭하면 해당 위키 페이지로, 참여자 헤더를 클릭하면 그 참여자를 다루는 페이지로 이동합니다. 가로선 위의 동그라미는 AG-UI 이벤트 스트림(SSE)을 거친다는 뜻입니다.</p>
+</header>
+<div class="legend">
+  <span style="--c: var(--interaction)">Interaction — 사용자 · 프론트엔드 · AG-UI 스트림</span>
+  <span style="--c: var(--reasoning)">Reasoning / Action — 에이전트 백엔드 · 툴</span>
+  <span class="dash">결정 모델 (트렌드 축)</span>
+  <span class="sse">AG-UI 이벤트 스트림 경유 (SSE)</span>
+</div>
+<div class="wrap">
+<svg id="seq" viewBox="0 0 1240 1010" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Generative UI 스트리밍 시퀀스 다이어그램">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#6b6b6b"/>
+    </marker>
+  </defs>
+</svg>
+</div>
+<div id="tip"></div>
+<footer>
+  거부 경로: 서버 재검증에서 불합격이면 수락 대신 <b>거부 이벤트 + 이유 코드</b>가 스트림으로 가고 프론트는 optimistic 변경을 이벤트 단위로 롤백한다 — <a href="../../04-dynamic-ui/04-streaming-state-sync.md">4/04</a>. 확신도가 임계값 미만이면 UI 대신 텍스트 또는 선택지 제시 — <a href="../../04-dynamic-ui/05-intent-to-ui-mapping.md">4/05</a>. 전체 흐름도는 <a href="dynamic-ui-architecture.html">dynamic-ui-architecture.html</a>.
+</footer>
+
+<script>
+const BASE = "../../";
+const P4 = "04-dynamic-ui/";
+
+// 참여자 (lifeline). x는 중심선
+const ACTORS = [
+  { id: "user",  t: "사용자",        sub: "읽기 · 선택 · 승인",         x: 110,  color: "var(--interaction)", href: P4 + "09-ux-accessibility.md",       d: "사용자 통제감 · 접근성 — 4/09" },
+  { id: "fe",    t: "프론트엔드",     sub: "레지스트리 바인딩 · 어댑터", x: 320,  color: "var(--interaction)", href: P4 + "07-frontend-integration.md",   d: "렌더러 · 이벤트 어댑터 — 4/07" },
+  { id: "agui",  t: "AG-UI 스트림",   sub: "SSE 이벤트 · POST 역방향",   x: 530,  color: "var(--interaction)", href: P4 + "02-protocols-ag-ui-a2ui-mcp-apps.md", d: "전송층: 생명주기 · 텍스트 · 툴 호출 · 상태 — 4/02" },
+  { id: "be",    t: "에이전트 백엔드", sub: "상태 머신 · 매핑 · 재검증",  x: 760,  color: "var(--reasoning)",   href: "03-agent-workflow-rag/12-guardrails-hitl.md", d: "상태 머신 · 가드레일·HITL — Part 3/12" },
+  { id: "dm",    t: "결정 모델",       sub: "Jev / Decisions API",        x: 970,  color: "var(--reasoning)",   href: P4 + "05-intent-to-ui-mapping.md",   d: "컴포넌트 선택 판정 + 보정 확률 [벤더] — 4/05", trend: true },
+  { id: "tool",  t: "툴",             sub: "MCP · 함수 호출",            x: 1150, color: "var(--reasoning)",   href: "03-agent-workflow-rag/09-tools-and-mcp.md", d: "툴 실행 · 멱등성 · 권한 — Part 3/09" },
+];
+
+// 메시지. kind: sync | async | ret | self.  via: "agui" 이면 스트림을 거친다는 표시
+const PHASES = [];
+const MSGS = [
+  { phase: "1 요청 · 스트리밍 시작", sub: "4/04" },
+  { from: "user", to: "fe",   t: "\"A와 B 상품 비교해 줘\"",                         kind: "sync",  href: P4 + "09-ux-accessibility.md",        d: "사용자 요청. 텍스트 입력 또는 이전 UI의 선택 이벤트" },
+  { from: "fe",   to: "be",   t: "run 시작 (HTTP POST, run_id · catalog_version)",  kind: "sync",  href: P4 + "04-streaming-state-sync.md",    d: "프론트가 자기 레지스트리 버전을 보내 호환성 판단 근거를 준다" },
+  { from: "be",   to: "fe",   t: "생명주기: 실행 시작 (seq 1)",                      kind: "async", via: "agui", href: P4 + "04-streaming-state-sync.md", d: "모든 서버 이벤트에 run ID + 단조 증가 순서 번호" },
+  { from: "fe",   to: "user", t: "로딩 상태 — \"상품 조회 중\" + 취소",               kind: "ret",   href: P4 + "09-ux-accessibility.md",        d: "스피너만 두지 않는다. 무엇을 하는 중인지와 취소 버튼" },
+  { from: "be",   to: "fe",   t: "텍스트 델타 × N — \"두 상품을 찾았습니다…\"",      kind: "async", via: "agui", href: P4 + "04-streaming-state-sync.md", d: "텍스트는 항상 존재 — UI가 실패하면 이것이 폴백" },
+
+  { phase: "2 의도 → UI 매핑", sub: "4/05 · 4/03" },
+  { from: "be",   to: "be",   t: "규칙 1차 필터 (권한 · 항목 수 · 플랫폼)",           kind: "self",  href: P4 + "05-intent-to-ui-mapping.md",    d: "결정론 행은 여기서 끝. 행동 의도는 규칙 고정" },
+  { from: "be",   to: "dm",   t: "타입드 질문: 후보 {비교표, 카드 리스트, 텍스트} 중?", kind: "sync",  href: P4 + "05-intent-to-ui-mapping.md",   d: "입력: 의도 · 데이터 요약 · 문맥(JSON). 온톨로지로 후보를 좁힌 뒤 질문" },
+  { from: "dm",   to: "be",   t: "선택 = 비교표, 보정 확률 ≥ θ",                kind: "ret",   href: P4 + "05-intent-to-ui-mapping.md",    d: "확신도 < θ 이면 텍스트 폴백 또는 선택지 제시. 성능 수치는 [벤더], 한국어는 [실측] 선행" },
+  { from: "be",   to: "be",   t: "카탈로그 조회 → props 바인딩 → 스키마 · 제약 검증",  kind: "self",  href: P4 + "03-component-registry-schema.md", d: "뉴로심볼릭 검증기 패턴. 불합격이면 폴백 체인" },
+
+  { phase: "3 UI 스트리밍 · 렌더", sub: "4/04 · 4/07" },
+  { from: "be",   to: "fe",   t: "툴 호출 시작: ProductComparisonTable (seq 7)",     kind: "async", via: "agui", href: P4 + "04-streaming-state-sync.md", d: "Controlled: 툴 호출 = 컴포넌트 선택. 프론트는 스켈레톤부터" },
+  { from: "be",   to: "fe",   t: "상태 패치 (JSON Patch): /comparison/items +2",     kind: "async", via: "agui", href: P4 + "04-streaming-state-sync.md", d: "공유 상태는 백엔드가 권위. 스냅샷 + 패치 혼합" },
+  { from: "be",   to: "fe",   t: "툴 호출 종료 (인자 완성) + 승인 카드 ui_intent",     kind: "async", via: "agui", href: P4 + "06-hitl-ui-patterns.md",    d: "장바구니 담기는 행동 → 규칙으로 ApprovalCard 고정" },
+  { from: "fe",   to: "fe",   t: "레지스트리 바인딩 → 클라이언트 스키마 재검증 → 렌더", kind: "self",  href: P4 + "07-frontend-integration.md",   d: "모르는 name · 메이저 버전 불일치 · 스키마 실패 → 텍스트 폴백 (예외 아님)" },
+  { from: "fe",   to: "user", t: "비교표 + 승인 카드 (행동 · 영향 · 근거 · 가역성)",   kind: "ret",   href: P4 + "06-hitl-ui-patterns.md",       d: "라이브 영역 알림, 기본 포커스는 '승인'이 아닌 요소. citation은 Part 2/08 스키마 그대로" },
+
+  { phase: "4 사용자 승인 (HITL)", sub: "4/06" },
+  { from: "user", to: "fe",   t: "\"승인\" 클릭",                                    kind: "sync",  href: P4 + "06-hitl-ui-patterns.md",       d: "사용자는 카드 안의 내용을 승인한다 — 렌더된 문서 텍스트가 아니라 서버 소유 행동 정의" },
+  { from: "fe",   to: "fe",   t: "optimistic: \"전송됨\" (실행됨 아님)",               kind: "self",  href: P4 + "04-streaming-state-sync.md",   d: "승인은 '전송됨'까지만 optimistic. 거부 시 이벤트 단위 롤백" },
+  { from: "fe",   to: "be",   t: "사용자 이벤트 POST: approval · idempotency_key · as_shown_hash · client_state_seq", kind: "sync", href: P4 + "04-streaming-state-sync.md", d: "계약 ③. user 필드는 프론트의 주장일 뿐 — 서버가 인증 컨텍스트로 다시 얻는다" },
+
+  { phase: "5 서버 재검증 · 실행", sub: "4/08 · 3/12 · 3/09" },
+  { from: "be",   to: "be",   t: "재검증 ①스키마 ②권한 ③상태·해시 ④멱등 ⑤정책 게이트", kind: "self", href: P4 + "08-security-sandboxing.md",   d: "①~④ Part 4, ⑤ Part 3/12. '보였으니 허용'은 없다. Rule ∧ Human" },
+  { from: "be",   to: "fe",   t: "수락 이벤트 (event_id 참조) + 상태 전이 APPROVED",   kind: "async", via: "agui", href: P4 + "04-streaming-state-sync.md", d: "거부라면 거부 이벤트 + 이유 코드 → 프론트 롤백" },
+  { from: "be",   to: "tool", t: "실행: add_to_cart(items, idempotency_key)",         kind: "sync",  href: "03-agent-workflow-rag/09-tools-and-mcp.md", d: "툴에도 멱등 키 전달. 이중 실행 방지" },
+  { from: "tool", to: "be",   t: "결과 (cart_id)",                                     kind: "ret",   href: "03-agent-workflow-rag/09-tools-and-mcp.md", d: "툴 결과는 상태 패치의 원천" },
+
+  { phase: "6 완료", sub: "4/04 · 4/09 · 4/10" },
+  { from: "be",   to: "fe",   t: "상태 패치: /cart/items +2, /approval/3/status = done", kind: "async", via: "agui", href: P4 + "04-streaming-state-sync.md", d: "패치 순서 번호 확인. 건너뛰면 스냅샷 재요청" },
+  { from: "be",   to: "fe",   t: "생명주기: 실행 종료 (seq 12)",                       kind: "async", via: "agui", href: P4 + "04-streaming-state-sync.md", d: "완료와 로딩이 구분되는 화면" },
+  { from: "fe",   to: "user", t: "완료 표시 + 다음 가능한 행동 + 피드백 버튼",          kind: "ret",   href: P4 + "10-evaluation-genui.md",       d: "렌더 결과(성공·폴백)와 사용자 이벤트를 트레이스에 보고 → 수정률 · 무시율 · 폴백률" },
+];
+
+// ---- 렌더 ----
+const svg = document.getElementById("seq");
+const NS = "http://www.w3.org/2000/svg";
+const tip = document.getElementById("tip");
+const byId = Object.fromEntries(ACTORS.map(a => [a.id, a]));
+
+function el(name, attrs, parent) {
+  const e = document.createElementNS(NS, name);
+  for (const k in attrs) e.setAttribute(k, attrs[k]);
+  (parent || svg).appendChild(e);
+  return e;
+}
+function text(x, y, str, cls, parent, anchor) {
+  const t = el("text", { x, y, class: cls || "", "text-anchor": anchor || "start" }, parent);
+  t.textContent = str; return t;
+}
+function bindLink(g, href, d) {
+  const go = () => { window.location.href = BASE + href; };
+  g.setAttribute("tabindex", "0"); g.setAttribute("role", "link");
+  g.addEventListener("click", go);
+  g.addEventListener("keydown", e => { if (e.key === "Enter") go(); });
+  g.addEventListener("mousemove", e => { tip.textContent = d + "  →  " + href; tip.style.left = (e.clientX + 12) + "px"; tip.style.top = (e.clientY + 12) + "px"; tip.style.opacity = 1; });
+  g.addEventListener("mouseleave", () => tip.style.opacity = 0);
+}
+
+const HEAD_Y = 16, HEAD_H = 52, HEAD_W = 170;
+const START_Y = HEAD_Y + HEAD_H + 26;
+const STEP = 30, PHASE_H = 26;
+
+// 총 높이 계산
+let y = START_Y;
+const rows = MSGS.map(m => { const r = { ...m, y }; y += m.phase ? PHASE_H + 6 : STEP; return r; });
+const END_Y = y + 10;
+
+// 생명선
+ACTORS.forEach(a => { el("line", { x1: a.x, y1: HEAD_Y + HEAD_H, x2: a.x, y2: END_Y, class: "lifeline" }); });
+
+// 활성 바 (백엔드·프론트는 거의 전 구간 활성)
+el("rect", { x: byId.be.x - 5, y: START_Y - 6, width: 10, height: END_Y - START_Y - 4, class: "act" });
+el("rect", { x: byId.fe.x - 5, y: START_Y - 6, width: 10, height: END_Y - START_Y - 4, class: "act" });
+
+// 헤더
+ACTORS.forEach(a => {
+  const g = el("g", { class: "head" + (a.trend ? " trend" : "") });
+  el("rect", { x: a.x - HEAD_W / 2, y: HEAD_Y, width: HEAD_W, height: HEAD_H, stroke: a.trend ? "var(--trend)" : a.color }, g);
+  text(a.x, HEAD_Y + 22, a.t, "", g, "middle").setAttribute("font-weight", "600");
+  text(a.x, HEAD_Y + 40, a.sub, "sub", g, "middle");
+  bindLink(g, a.href, a.d);
+});
+
+// 메시지
+let n = 0;
+rows.forEach(r => {
+  if (r.phase) {
+    const g = el("g", { class: "phase" });
+    el("rect", { x: 20, y: r.y - 4, width: 1200, height: PHASE_H, opacity: .9 }, g);
+    const t = text(32, r.y + 14, r.phase, "", g);
+    const s = el("tspan", { class: "sub", dx: 10 }, t); s.textContent = r.sub;
+    return;
+  }
+  n++;
+  const a = byId[r.from], b = byId[r.to];
+  const g = el("g", { class: "msg " + r.kind });
+  if (r.kind === "self") {
+    const x = a.x + 6, yy = r.y;
+    el("path", { d: `M${x},${yy - 6} L${x + 46},${yy - 6} L${x + 46},${yy + 10} L${x + 2},${yy + 10}` }, el("g", { class: "self" }, g));
+    text(x + 54, yy + 4, r.t, "", g);
+    text(x + 54 - 8, yy - 10, String(n), "n", g, "end");
+  } else {
+    const dir = b.x > a.x ? 1 : -1;
+    const x1 = a.x + dir * 6, x2 = b.x - dir * 6;
+    el("line", { x1, y1: r.y, x2, y2: r.y }, g);
+    if (r.via) { const v = byId[r.via]; el("circle", { cx: v.x, cy: r.y, r: 5, class: "sse-dot" }, g); }
+    const mid = (x1 + x2) / 2;
+    text(mid, r.y - 6, r.t, "", g, "middle");
+    text(Math.min(x1, x2) + 4, r.y - 6, String(n), "n", g);
+  }
+  bindLink(g, r.href, r.d);
+});
+
+// 노트: 임계값 미만 / 거부 분기
+(function () {
+  const g = el("g", { class: "note" });
+  const x = 1035, yA = rows.find(r => r.t && r.t.startsWith("선택 = 비교표")).y - 2;
+  el("rect", { x, y: yA + 8, width: 185, height: 36 }, g);
+  text(x + 8, yA + 22, "확신도 < θ → 텍스트 폴백 /", "", g);
+  text(x + 8, yA + 36, "선택지 제시 (4/05 · 4/06)", "", g);
+  const g2 = el("g", { class: "note" });
+  const yB = rows.find(r => r.t && r.t.startsWith("재검증")).y - 2;
+  el("rect", { x, y: yB + 8, width: 185, height: 36 }, g2);
+  text(x + 8, yB + 22, "불합격 → 거부 이벤트 + 이유 코드", "", g2);
+  text(x + 8, yB + 36, "→ 프론트 롤백 (4/04)", "", g2);
+})();
+
+svg.setAttribute("viewBox", `0 0 1240 ${END_Y + 20}`);
+</script>
+</body>
+</html>

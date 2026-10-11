@@ -2,53 +2,130 @@
 title: "동적 UI 결정 매트릭스"
 part: 04-dynamic-ui
 stage: all
-tags: []
-maturity: 미정
-status: stub
+tags: [decision-matrix, generative-ui, ag-ui, a2ui, mcp-apps, hitl]
+maturity: 시험
+status: review
 updated: 2026-10-11
 ---
 
 # 동적 UI 결정 매트릭스
 
 > **범위**: 요구사항 × 패턴 × 프로토콜 종합표와 한계
+> 이 Part의 모든 단계에 대한 기술 선택을 **한 장**으로 요약한다. 상세 근거는 각 단계 페이지에 있다. 이 Part는 2026-10 현재 프로토콜이 수렴 중이라 성숙도가 낮다. 표의 "기본값"은 **가장 보수적인 선택**이며, 그 외 선택은 조건이 확인된 뒤에만 연다.
+> **시각화**: [`assets/html/dynamic-ui-architecture.html`](../assets/html/dynamic-ui-architecture.html) — 단계 순서대로 노드 배치
 
-## 요약 (3줄)
+## 1. 결정에 영향을 주는 입력 변수
 
-_작성 예정_
+| 변수 | 값의 범위 | 영향을 받는 단계 |
+|---|---|---|
+| **사용자 행위** | 읽기만 / 선택·비교 / 입력·수정 / 승인(행동으로 이어짐) | 01 통제 수준, 05 매핑, 06 HITL — 가장 중요한 변수. "읽기만"이면 Part 4의 대부분이 불필요 |
+| **플랫폼** | 웹만 / 웹 + 모바일 웹 / iOS·Android 네이티브 / 기존 앱 임베딩 / 여러 호스트(IDE·챗·포털) | 02 프로토콜, 07 통합, 08 임베딩 방식 |
+| **디자인 시스템 엄격도** | 없음 / 있음(컴포넌트 수준) / 엄격(배치·간격까지 심사) / 법규·조달 접근성 요건 | 01 통제 수준, 03 토큰, 09 접근성 |
+| **서드파티 툴 UI 필요** | 없음 / 표시만 / 상호작용 포함 | 02 MCP Apps, 08 샌드박스·브리지 |
+| **팀 구성** | 풀스택 단일 팀 / 프론트·백 분리 / 백엔드 프레임워크 다수 / 네이티브 팀 보유 | 02 전송층, 07 SDK 선택 |
+| **컴포넌트 수·조합** | 수 개 / 수십 개 / 조합 폭발(대시보드·임의 열 표) | 01 Controlled vs Declarative, 03 계층화, 05 선택 수단 |
+| **행동의 위험도** | 가역·저액 / 비가역·고액·외부 전송 / 규제·감사 대상 | 06 승인 카드, 08 재검증, 10 A/B 가능 여부 |
+| **트래픽·지연 요구** | 소량 / 대량, 선택 지연이 체감되는가 | 05 선택 수단(결정 모델 vs LLM) |
+| **온톨로지 보유** | 없음 / Part 2에서 이미 사용 | 05 매핑, 03 바인딩 |
+| **언어** | 한국어 중심 / 다국어 / RTL 포함 | 05 결정 모델 `[실측]` 필요성, 09 i18n |
 
-## 이 단계에서 무엇을 · 언제 · 어떻게 · 왜
+## 2. 단계별 선택표
 
-| 질문 | 답 |
-|---|---|
-| **무엇을** (What) | _이 단계가 책임지는 산출물_ |
-| **언제** (When) | _이 단계가 필요한 조건 / 생략 가능한 조건_ |
-| **어떻게** (How) | _표준 진행 절차_ |
-| **왜** (Why) | _생략했을 때 생기는 문제_ |
+| 단계 | 기본값 (판단 어려울 때) | 조건 A → 선택 | 조건 B → 선택 | 피해야 할 조합 |
+|---|---|---|---|---|
+| **01 통제 수준** | Controlled | 조합 폭발 + 트리 검증 역량 → 해당 의도만 Declarative | 서드파티 UI 필요 → 그 영역만 Open-ended(샌드박스) | 행동 UI(승인·실행)를 Declarative·Open-ended로 / 접근성 법규 요건에 Open-ended |
+| **02 전송층** | 프레임워크 내장 스트리밍(단일 풀스택) | 프론트·백 분리 또는 백엔드 다수 → AG-UI | 비HTTP 전송·의존성 심사 → 자체(AG-UI 범주 구조 차용) | 내장 스트리밍 위에 AG-UI 흉내(두 규약 유지) |
+| **02 내용층** | 자체 레지스트리(Controlled) | 웹+모바일 네이티브 Declarative → A2UI("Basic" 세트 + 확장) | — | A2UI 세트 밖 컴포넌트가 다수인데 A2UI 채택 |
+| **02 서드파티 UI** | 수용하지 않음 | 표시만 → MCP Apps iframe, 브리지 없음 | 상호작용 포함 → MCP Apps + 화이트리스트 브리지 + 서버 재검증 | iframe 안에 승인 UI / `allow-scripts`+`allow-same-origin` |
+| **03 레지스트리** | JSON Schema 원본 + 생성 | 단일 언어 → zod/pydantic 류 코드 원본 | 디자인 시스템 팀 보유 → DS 패키지에 내장 | 프롬프트 자유 텍스트 카탈로그(운영) / 색·간격을 props 자유값으로 |
+| **03 에이전트 노출** | 툴 정의(컴포넌트 = 툴) | 선택지 수십 개 초과 → 계층화(그룹 → 툴) | 대량·임계값 필요 → 결정 모델 enum | 수십 개 툴을 한 번에 노출 |
+| **04 전송 채널** | SSE + HTTP POST 역방향 | 고빈도 양방향(드래그·공동 편집) → WebSocket | 스트리밍 불가 환경 → 폴링 폴백 | 저빈도 이벤트에 WebSocket(과잉) |
+| **04 상태 동기화** | 스냅샷 + JSON Patch 혼합 | 상태 아주 작음 → 스냅샷만 | — | 순서 번호 없는 패치 / 승인을 "실행됨"으로 optimistic |
+| **05 선택 수단** | 규칙 1차 필터 + LLM 툴 호출(트레이스 기록) | 선택지 굳음 + 대량 + 임계값 폴백 → 결정 모델(한국어 `[실측]` 후) | 온톨로지 보유 → 온톨로지로 후보 좁힌 뒤 결정 모델/LLM | 행동 의도를 확률 수단에 / 폴백 없는 매핑 |
+| **06 HITL 패턴** | citation 렌더 + 피드백 캡처 | 비가역·고액 행동 → 승인 카드(영향 범위·근거·`as_shown_hash`) | 값 오류 가능 → 인라인 수정 → 승인 / 코드·문서 → diff 뷰 | 채팅 텍스트 "예"로 승인(운영) / 타임아웃 자동 승인 |
+| **07 웹 통합** | React 클라이언트 레지스트리 + 이벤트 어댑터(SDK는 어댑터 뒤) | Next.js 풀스택 → Vercel AI SDK | Python/.NET 백엔드 → CopilotKit 또는 AG-UI SDK | 컴포넌트가 SDK API를 직접 호출 |
+| **07 모바일 통합** | 자체 Controlled 네이티브 렌더러 | Declarative 필요 → A2UI 렌더러 `[실측]` 후 | — | iOS 핵심 기능을 미검증 A2UI 렌더러에 의존 |
+| **07 임베딩** | 위젯(자사 Controlled) | 서드파티·신뢰 수준 다름 → iframe | — | 서드파티 코드를 위젯으로 호스트 문서에 |
+| **08 보안** | props 스키마 + 서버 재검증 ①~⑤ + 출처 태그 | Declarative → 트리·조합·바인딩 검증 + 렌더러 값 평가 금지 | Open-ended → iframe sandbox + CSP + 별도 출처 + postMessage 브리지 | 클라이언트 검증만 / sanitizer로 생성 HTML 삽입 / "보였으니 허용" |
+| **09 UX·접근성** | 텍스트 우선 + 밀도 상한 + Controlled 접근성 내장 + 라이브 영역 | Declarative → 레이아웃 템플릿 + 런타임 접근성 검증기 | 법규 요건 → 요건 영역은 Controlled 고정 | 생성 UI에 접근성 검증 없음 / 승인 카드 기본 포커스 "승인" |
+| **10 평가** | 매핑 행당 골든셋 10건 + CI 스키마·카탈로그 대조 + 수정률·무시율·폴백률 | 선택 수단 비교 → 같은 한국어 골든셋 + 보정 곡선 + A/B | UI 효과 증명 → 의도 유형 층화 A/B(대조군 텍스트) | 눈대중 QA / 전체 평균 A/B / 고위험 승인 UI를 A/B |
 
-## 문제와 맥락
+## 3. 시나리오별 추천 조합
 
-## 핵심 개념
+### 3.1 요약
 
-## 아키텍처 / 파이프라인
+| 시나리오 | 조합 | 이유 | 알려진 한계 |
+|---|---|---|---|
+| **A. 사내 문서 QA 어시스턴트** — 읽기 + 근거 확인, 웹, 서드파티 UI 없음, 권한 복잡 | Controlled(사실상 UI 결정 생략) · 내장 스트리밍 · 카탈로그 3~5개 · 규칙 매핑 · **citation 렌더 중심** · 위젯 임베딩 | 사용자 행위가 "읽기"라 Part 4 대부분이 불필요. 가치는 Part 2/08 스키마를 그대로 보여주는 데 있다 | citation 스키마 확정 전 렌더 규칙 변동. 권한 밖 근거를 건수로만 보여주면 답이 부실한 이유를 사용자가 이해하기 어려움 |
+| **B. 커머스 상담 + Generative UI** — 선택·비교·장바구니 승인, 웹 + 모바일 웹, 디자인 시스템 엄격, 상품 온톨로지 보유, 대량 트래픽 | **Controlled → 임의 열 비교만 Declarative** · AG-UI · 카탈로그 수십 개 + 온톨로지 바인딩 · 규칙 → 온톨로지 → 결정 모델(`[실측]` 후) · 승인 카드 + 선택지 제시 · 층화 A/B | Interaction 중심. Controlled가 카드·리스트·승인을 덮고, 열 구성이 매번 다른 비교표만 Declarative. 온톨로지가 있어 매핑 후보 좁히기가 공짜에 가깝고, 트래픽이 많아 결정 모델의 비용 이점이 의미 있다 | 결정 모델 UI 선택 사례 미확인·한국어 미검증 → LLM 병행 필수. Declarative 비교표 접근성은 런타임 검증 의존. 네이티브로 가면 A2UI v0.9 `[벤더]` 종속 |
+| **C. 운영 인시던트 대응 에이전트** — 승인이 핵심(재시작·롤백·스케일), 비가역·고위험, 운영 콘솔 + 모니터링 포털 임베딩, 담당자 교대, 감사 대상 | **Controlled 고정(자유도 0)** · AG-UI · 카탈로그 10여 개 · **규칙만** · **승인 UI 중심**(영향 범위·근거·가역성·타임아웃·에스컬레이션) · A/B 금지 | 틀리면 서비스가 내려가므로 UI는 **승인의 질**에 집중. 생성 자유도는 가치가 없고 위험만 있다. 영향 범위는 서비스 의존성 온톨로지가 공급 | 승인 피로 — 인시던트 중 연속 승인이 반사적이 됨. 감사 로그가 UI 이벤트(`as_shown_hash`)까지 보존해야 해 저장 설계가 Part 5/04에 걸침 |
 
-## 기술 비교표 — 이 단계에서 쓸 수 있는 선택지
+### 3.2 시나리오 A — 사내 문서 QA ([시나리오 A](../07-appendix-scenarios/01-enterprise-document-qa.md))
 
-| 기술 / 접근 | 적합한 상황 | 부적합한 상황 | 비용·복잡도 | 성숙도 | 검증 수준 |
-|---|---|---|---|---|---|
-| | | | | | |
+| 단계 | 선택 | 대안(채택 안 한 이유) |
+|---|---|---|
+| 01 통제 수준 | Controlled. 실질적으로 "텍스트 + citation" | Declarative — 조작 과업이 없어 가치 없음 |
+| 02 프로토콜 | 프레임워크 내장 스트리밍 | AG-UI — 풀스택 단일 팀이면 추상화 비용만 |
+| 03 레지스트리 | CitationList, EvidenceHighlight, FeedbackBar, OptionChips 4개. `bindings`는 Part 2/08 근거 단위 | — |
+| 04 동기화 | SSE + 스냅샷(상태가 작음) | 패치 — 과잉 |
+| 05 매핑 | 규칙만: citations 있음 → CitationList, 확신도 낮음 → OptionChips(명확화) | 결정 모델 — 선택지가 2개뿐 |
+| 06 HITL | **citation 렌더**(출처·버전·신뢰도·하이라이트·권한 밖 건수) + 피드백(이유 코드) | 승인 카드 — 행동 없음 |
+| 07 통합 | React 위젯을 사내 포털에 임베딩(자사 코드) | iframe — 신뢰 경계가 같음 |
+| 08 보안 | props 스키마 + 출처 태그(문서 본문 → 하이라이트 → 피드백 경로가 유일한 인젝션 경로) | 샌드박스 — 코드 실행 없음 |
+| 09 UX | 라이브 영역 요약, 텍스트 우선, 근거 없는 문장 표시 | — |
+| 10 평가 | citation 정확도(Part 3/13과 공유), 피드백 이유 분포, 권한 밖 근거 비율 | UI 선택 정확도 — 선택이 결정론 |
 
-## 설계 시 고려사항 (체크리스트)
+### 3.3 시나리오 B — 커머스 상담 + Generative UI ([시나리오 B](../07-appendix-scenarios/02-commerce-assistant-genui.md))
 
-- [ ]
+| 단계 | 선택 | 대안(채택 안 한 이유) |
+|---|---|---|
+| 01 통제 수준 | Controlled 기본, `compare_products`(임의 열) 의도만 Declarative 비교표 | 전면 Declarative — 디자인 시스템 엄격, 승인 UI 포함 |
+| 02 프로토콜 | AG-UI(프론트·백 분리, Python 백엔드) + 비교표 트리는 커스텀 이벤트에 탑재 | A2UI — 모바일 웹까지는 자체 트리로 충분. 네이티브 확장 시 재검토 |
+| 03 레지스트리 | 수십 개, 의도 그룹으로 계층화. 상품 온톨로지 클래스에 바인딩, 시각 속성은 토큰 enum | 프롬프트 카탈로그 — 수십 개는 토큰·정확도 문제 |
+| 04 동기화 | SSE + 스냅샷·패치 혼합(장바구니 공유 상태). 장바구니 승인은 optimistic "전송됨"까지 | WebSocket — 이벤트 저빈도 |
+| 05 매핑 | 규칙(권한·항목 수·모바일 폭) → 온톨로지(주 엔티티 → 후보) → 결정 모델(한국어 골든셋 `[실측]` 통과 후, 그 전엔 LLM 툴 호출) | LLM만 — 트래픽 대비 비용, 임계값 폴백 불가 |
+| 06 HITL | 장바구니·주문 승인 카드(금액·가역성), 선택지 제시(확신도 < θ), 피드백 | 인라인 수정 — 옵션 변경은 상품 카드 자체 UI로 |
+| 07 통합 | React + CopilotKit(또는 AG-UI SDK), 어댑터 뒤. 모바일 웹 반응형 | Flutter + A2UI — 네이티브 요구 확정 전 |
+| 08 보안 | Declarative 영역 트리·조합·바인딩 검증, 렌더러 값 평가 금지, 서버 재검증 전부 | — |
+| 09 UX | 밀도 상한(모바일), 매핑 결과 캐시로 결정론, 비교표 런타임 접근성 검증 | — |
+| 10 평가 | 의도 유형 층화 A/B(비교 의도: 표 vs 텍스트), 수정률·무시율·폴백률, 결정 모델 보정 곡선 | 전체 평균 A/B — 의도별 효과 상쇄 |
 
-## 한계와 리스크
+### 3.4 시나리오 C — 운영 인시던트 대응 ([시나리오 C](../07-appendix-scenarios/03-ops-incident-agent.md))
 
-## 최신 트렌드 적용 (최근 1년)
+| 단계 | 선택 | 대안(채택 안 한 이유) |
+|---|---|---|
+| 01 통제 수준 | Controlled 고정. 생성 자유도 0 | Declarative — 고위험 행동 UI에 자유도는 위험만 |
+| 02 프로토콜 | AG-UI(멀티 에이전트 백엔드, 운영 콘솔 프론트 분리) | 내장 스트리밍 — 백엔드 프레임워크 다수 |
+| 03 레지스트리 | 10여 개: ApprovalCard, DiffView(설정·런북), ProgressTimeline, ImpactGraph, EscalationCard | — |
+| 04 동기화 | SSE + 혼합. 멱등 키·`as_shown_hash`·`client_state_seq` 전부 적용. 승인 optimistic "전송됨"까지 | — |
+| 05 매핑 | **규칙만** — 모든 의도가 행동 또는 상태 표시 | 결정 모델 — 행동 UI는 확률 수단 금지. 확신도는 Part 3/12 게이팅에서만 |
+| 06 HITL | 승인 카드(영향 범위 = 의존 서비스 그래프, 로그·메트릭 citation, 가역성, Part 3/12 확신도), diff 뷰, 타임아웃 "실행 안 함" + 에스컬레이션(대리 권한 검증) | 채팅 "예" 승인 — 감사 불가 |
+| 07 통합 | React, 모니터링 포털에 위젯 임베딩 | iframe — 자사 코드 |
+| 08 보안 | 서버 재검증 전부 + 규칙 게이트(한도·권한)를 승인과 별도 유지. 승인 UI는 iframe 밖 | — |
+| 09 UX | 승인 카드 `assertive` 라이브 영역, 기본 포커스 비승인 요소, 키보드 완결, 모션 최소 | — |
+| 10 평가 | A/B 금지(고위험). 승인 처리 시간·거절 사유·사후 되돌림률, 보조 기술 사용자 테스트 | — |
 
-_온톨로지 · 뉴로심볼릭 · 결정 모델(Jev, Decisions API) 등이 이 단계에서 하는 역할_
+## 4. 한계 종합
 
-## 관련 페이지
+이 Part의 기술들이 공통으로 갖는 한계와, 그 한계가 다음 Part로 넘어가는 지점.
 
-## 참고 문헌
+| 공통 한계 | 설명 | 넘어가는 곳 |
+|---|---|---|
+| **성숙도 전반이 낮다** | AG-UI·A2UI(v0.9)·MCP Apps 모두 2026년에 SDK·버전이 바뀌는 중. 어떤 선택도 어댑터 계층과 버전 고정을 전제로 한다. maturity는 "시험"을 넘지 않는다 | [Part 6/generative-ui](../06-trends/generative-ui.md), [Part 6/agentic-protocols-convergence](../06-trends/agentic-protocols-convergence.md) — 트렌드 추적 |
+| **3패턴 프레이밍의 출처 편향** | Controlled / Declarative / Open-ended 구분과 프로토콜 대응은 AG-UI 주도사(CopilotKit)의 정리 `[2차]`. 패턴 구분은 유효하나 "Controlled = AG-UI" 등식은 전송층·내용층 분리로 교정해 읽는다 | [01](01-generative-ui-spectrum.md), [02](02-protocols-ag-ui-a2ui-mcp-apps.md) |
+| **결정 모델의 UI 적용 사례 부족** | 컴포넌트 선택에 Jev / Decisions API를 쓴 보고가 드물고, 성능은 `[벤더]`, 영어 중심. 한국어 골든셋 `[실측]` 없이 채택하지 않는다 | [Part 3/11 결정 레이어](../03-agent-workflow-rag/11-decision-layer.md), [Part 6/decision-models](../06-trends/decision-models.md) |
+| **자유도와 보안·접근성·일관성의 동반 하락** | Declarative·Open-ended의 상쇄 수단(트리 검증기, 샌드박스, 런타임 접근성 검증)은 Controlled의 상쇄 수단(스키마 한 줄)보다 훨씬 비싸고 검증된 방법론이 없다 | [Part 5/01 보안](../05-cross-cutting/01-security-prompt-injection.md), [Part 5/04 거버넌스](../05-cross-cutting/04-governance-explainability.md) |
+| **UI는 외부 입력 경계다** | 렌더된 콘텐츠와 사용자 이벤트가 에이전트 입력이 되는 경로가 인젝션·권한 상승의 새 공격면. 프로토콜은 보안을 정의하지 않는다 | [Part 5/01](../05-cross-cutting/01-security-prompt-injection.md), [Part 3/12 가드레일·HITL](../03-agent-workflow-rag/12-guardrails-hitl.md) — 서버 재검증 ⑤ 정책 게이트 |
+| **평가 벤치마크 부재** | 공개 데이터셋·표준 지표가 없어 모든 수치가 `[실측]`. 골든셋을 직접 만들어야 하고 외부 비교가 불가 | [Part 1/06](../01-foundations/06-evaluation-observability.md), [Part 3/13](../03-agent-workflow-rag/13-evaluation-rag-agents.md), [Part 5/03 관측성](../05-cross-cutting/03-observability-tracing.md) — UI 이벤트 스팬 속성 미표준 |
+| **계약 의존성** | Part 4는 Part 2/08 citation 스키마와 Part 3의 `ui_intent`·상태 머신 입력에 전적으로 의존한다. 그 계약이 흔들리면 이 Part의 선택이 무효화된다 | [Part 0/01 레퍼런스 아키텍처](../00-overview/01-reference-architecture.md) — 계약 ①②③, [Part 5/05 LLMOps](../05-cross-cutting/05-llmops-agentops.md) — 계약 변경 절차 |
+| **모바일 네이티브의 단일 선택지** | 개방 선택지가 A2UI뿐이고 v0.9 `[벤더]`. 네이티브 렌더러 품질을 `[실측]`하기 전엔 자체 Controlled 렌더러가 안전 | [07](07-frontend-integration.md) |
+| **HITL은 정확성을 보장하지 않는다** | 사람 승인은 규칙 게이트(한도·권한)를 대체하지 못하고, 승인 피로로 형식화될 수 있다 | [Part 3/12](../03-agent-workflow-rag/12-guardrails-hitl.md) — 게이팅 임계값, [06](06-hitl-ui-patterns.md) |
 
-_검증 수준 표기: `[검증]` `[벤더]` `[2차]` `[실측]` — 규칙은 [작성 가이드](../_meta/writing-guide.md) 참조_
+## 5. 관련 페이지
+
+- [00 Part 4 개요](00-overview.md) — 설계 원칙 5개
+- 단계 페이지: [01](01-generative-ui-spectrum.md) · [02](02-protocols-ag-ui-a2ui-mcp-apps.md) · [03](03-component-registry-schema.md) · [04](04-streaming-state-sync.md) · [05](05-intent-to-ui-mapping.md) · [06](06-hitl-ui-patterns.md) · [07](07-frontend-integration.md) · [08](08-security-sandboxing.md) · [09](09-ux-accessibility.md) · [10](10-evaluation-genui.md)
+- 다른 Part의 결정 매트릭스: [Part 2/99](../02-data-pipeline/99-decision-matrix.md), [Part 3/99](../03-agent-workflow-rag/99-decision-matrix.md)
+- [Part 0/02 종합 기술 선택 결정 트리](../00-overview/02-decision-guide.md), [Part 1/05 에이전트 프로토콜](../01-foundations/05-agentic-protocols.md)
+- 시나리오: [A 사내 문서 QA](../07-appendix-scenarios/01-enterprise-document-qa.md) · [B 커머스 상담 + GenUI](../07-appendix-scenarios/02-commerce-assistant-genui.md) · [C 운영 인시던트](../07-appendix-scenarios/03-ops-incident-agent.md)
+- 날짜·버전·검증 수준의 원본: [연구 노트](../_meta/research-notes-2026-10.md) "프로토콜"·"결정 모델" 절

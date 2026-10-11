@@ -10,7 +10,7 @@ updated: 2026-10-11
 
 # Part 4. Agent 기반 동적 UI 연동 설계
 
-> **시각화**: `assets/html/dynamic-ui-architecture.html` (예정)
+> **시각화**: [`assets/html/dynamic-ui-architecture.html`](../assets/html/dynamic-ui-architecture.html) — 노드 클릭 시 해당 페이지로 이동
 > Interaction Layer. 에이전트의 출력을 **텍스트가 아닌 UI로**, 사용자의 행위를 **프롬프트가 아닌 이벤트로** 주고받는 설계. 2026년 현재 이 레이어는 프로토콜이 수렴 중이라 Part 2·3보다 성숙도가 낮다. 성숙도 표기를 특히 유의해서 읽는다.
 
 ## 이 Part의 역할

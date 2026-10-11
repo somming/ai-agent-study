@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>멀티 에이전트 토폴로지 4종 비교</title>
+<style>
+  :root {
+    --bg: #fafaf8; --fg: #1d1d1b; --muted: #6b6b6b; --line: #d9d9d4; --card: #ffffff;
+    --knowledge: #2E7D6B; --reasoning: #3A5FA8; --interaction: #B5651D; --cross: #6B6B6B;
+    --trend: #8E44AD;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #15161a; --fg: #ececea; --muted: #9a9a95; --line: #33353b; --card: #1e2026; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.5 -apple-system, "Pretendard", "Noto Sans KR", system-ui, sans-serif; }
+  header { padding: 20px 28px 8px; }
+  header h1 { margin: 0 0 4px; font-size: 20px; font-weight: 650; }
+  header p { margin: 0; color: var(--muted); }
+  .legend { display: flex; gap: 16px; flex-wrap: wrap; padding: 8px 28px 0; color: var(--muted); font-size: 12px; }
+  .legend span::before { content: ""; display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: -1px; background: var(--c); }
+  .legend span.dash::before { background: transparent; border: 2px dashed var(--trend); width: 8px; height: 8px; }
+  .wrap { padding: 12px 28px 28px; }
+  svg { width: 100%; height: auto; display: block; }
+  .panel { fill: var(--card); stroke: var(--line); rx: 10; cursor: pointer; }
+  .panel-g:hover .panel, .panel-g:focus .panel { stroke: var(--reasoning); stroke-width: 2; }
+  .panel-g:focus { outline: none; }
+  .p-title { font-size: 15px; font-weight: 700; fill: var(--reasoning); }
+  .p-sub { font-size: 11px; fill: var(--muted); }
+  .ag circle { fill: var(--card); stroke: var(--reasoning); stroke-width: 1.6; }
+  .ag.sup circle { fill: var(--reasoning); fill-opacity: .15; stroke-width: 2.2; }
+  .ag.ext circle { stroke: var(--interaction); stroke-dasharray: 4 3; }
+  .ag text { font-size: 11px; fill: var(--fg); pointer-events: none; }
+  .ag .role { font-size: 10px; fill: var(--muted); }
+  .state { fill: var(--knowledge); fill-opacity: .10; stroke: var(--knowledge); stroke-width: 1.5; rx: 6; }
+  .state-t { font-size: 11px; fill: var(--knowledge); font-weight: 600; }
+  .judge { fill: var(--card); stroke: var(--trend); stroke-dasharray: 4 3; stroke-width: 1.5; rx: 5; }
+  .judge-t { font-size: 10px; fill: var(--fg); }
+  .e { stroke: var(--muted); stroke-width: 1.4; fill: none; marker-end: url(#a); }
+  .e.ret { stroke-dasharray: 3 3; }
+  .e.cond { stroke: var(--reasoning); }
+  .e.msg { stroke: var(--interaction); }
+  .cond-t { font-size: 10px; fill: var(--reasoning); }
+  .meta { font-size: 11px; fill: var(--muted); }
+  #tip { position: fixed; pointer-events: none; background: var(--fg); color: var(--bg); padding: 6px 10px; border-radius: 6px; font-size: 12px; max-width: 360px; opacity: 0; transition: opacity .1s; z-index: 10; }
+  footer { padding: 0 28px 24px; color: var(--muted); font-size: 12px; }
+  footer a { color: inherit; }
+</style>
+</head>
+<body>
+<header>
+  <h1>멀티 에이전트 토폴로지 — Supervisor · Hierarchical · Handoff · 그래프</h1>
+  <p>네 토폴로지의 차이는 <b>제어 흐름을 누가 쥐는가</b>와 <b>상태를 어떻게 공유하는가</b>입니다. 원은 자체 루프를 가진 에이전트, 초록 상자는 공유 상태, 점선 상자는 결정 모델·규칙이 맡을 수 있는 조정 판정. 패널을 클릭하면 본문으로 이동합니다.</p>
+</header>
+<div class="legend">
+  <span style="--c: var(--reasoning)">에이전트 (자체 루프) — 진한 원은 조정자</span>
+  <span style="--c: var(--knowledge)">공유 상태 (스키마 정의)</span>
+  <span style="--c: var(--interaction)">메시지 전달 / 타 조직 에이전트 (A2A)</span>
+  <span class="dash">조정 판정 — 위임 대상 · 핸드오프 · 종합 시점</span>
+  <span style="--c: var(--cross)">점선 화살표 = 결과 반환</span>
+</div>
+<div class="wrap">
+<svg id="topo" viewBox="0 0 1240 860" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="멀티 에이전트 토폴로지 4종">
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#6b6b6b"/></marker>
+  </defs>
+</svg>
+</div>
+<div id="tip"></div>
+<footer>
+  본문: <a href="../../03-agent-workflow-rag/07-multi-agent-orchestration.md">07 멀티 에이전트 오케스트레이션</a> · 단일 에이전트 루프는 <a href="../../03-agent-workflow-rag/06-agent-design-patterns.md">06</a> · 공유 상태 모델링은 <a href="../../03-agent-workflow-rag/08-state-memory-context.md">08</a> · A2A는 <a href="../../01-foundations/05-agentic-protocols.md">Part 1/05</a>. 멀티 에이전트는 단일 에이전트의 컨텍스트·역할 한계가 <b>측정</b>된 뒤의 선택.
+</footer>
+
+<script>
+const BASE = "../../";
+const P3 = "03-agent-workflow-rag/";
+const svg = document.getElementById("topo");
+const NS = "http://www.w3.org/2000/svg";
+const tip = document.getElementById("tip");
+function el(name, attrs, parent) { const e = document.createElementNS(NS, name); for (const k in attrs) e.setAttribute(k, attrs[k]); (parent || svg).appendChild(e); return e; }
+function text(x, y, str, cls, parent, anchor) { const t = el("text", { x, y, class: cls || "", "text-anchor": anchor || "start" }, parent); t.textContent = str; return t; }
+function showTip(e, str) { tip.textContent = str; tip.style.left = (e.clientX + 12) + "px"; tip.style.top = (e.clientY + 12) + "px"; tip.style.opacity = 1; }
+function hideTip() { tip.style.opacity = 0; }
+
+// 에이전트 원
+function agent(g, x, y, label, role, kind, d) {
+  const a = el("g", { class: "ag " + (kind || "") }, g);
+  el("circle", { cx: x, cy: y, r: 22 }, a);
+  text(x, y + 4, label, "", a, "middle");
+  if (role) text(x, y + 36, role, "role", a, "middle");
+  a.addEventListener("mousemove", e => { e.stopPropagation(); showTip(e, d); });
+  return a;
+}
+// 두 점 사이 간선 (원 반지름 고려)
+function edge(g, x1, y1, x2, y2, cls, r1, r2) {
+  r1 = r1 == null ? 22 : r1; r2 = r2 == null ? 22 : r2;
+  const dx = x2 - x1, dy = y2 - y1, L = Math.hypot(dx, dy) || 1;
+  const sx = x1 + dx / L * r1, sy = y1 + dy / L * r1, ex = x2 - dx / L * r2, ey = y2 - dy / L * r2;
+  el("path", { d: `M${sx},${sy} L${ex},${ey}`, class: "e " + (cls || "") }, g);
+}
+// 결과 반환 (살짝 비켜난 점선)
+function ret(g, x1, y1, x2, y2, off) {
+  off = off || 8;
+  const dx = x2 - x1, dy = y2 - y1, L = Math.hypot(dx, dy) || 1, nx = -dy / L * off, ny = dx / L * off;
+  edge(g, x1 + nx, y1 + ny, x2 + nx, y2 + ny, "ret");
+}
+function judge(g, x, y, w, label, d) {
+  const j = el("g", {}, g);
+  el("rect", { x: x - w / 2, y: y - 11, width: w, height: 22, class: "judge" }, j);
+  text(x, y + 4, label, "judge-t", j, "middle");
+  j.addEventListener("mousemove", e => { e.stopPropagation(); showTip(e, d); });
+}
+function stateBox(g, x, y, w, h, label, d) {
+  const s = el("g", {}, g);
+  el("rect", { x, y, width: w, height: h, class: "state" }, s);
+  text(x + 10, y + 16, label, "state-t", s);
+  s.addEventListener("mousemove", e => { e.stopPropagation(); showTip(e, d); });
+}
+
+const PANELS = [
+  { name: "Supervisor", sub: "중앙이 위임·종합. 워커끼리는 통신 안 함", href: P3 + "07-multi-agent-orchestration.md",
+    ctrl: "제어: 중앙 집중 (Supervisor)", state: "상태: Supervisor 보유, 워커는 과업 단위 입출력", fit: "적합: 역할 3~6, 종합 품질 중요", bad: "부적합: 역할 많음(병목), 워커 간 직접 협업", fail: "실패: Supervisor 병목·단일 실패점, 위임 오판",
+    draw(g, px, py) {
+      const cx = px + 190, cy = py + 110;
+      agent(g, cx, cy, "Sup", "조정자", "sup", "Supervisor: 과업을 받아 워커에게 위임, 결과를 종합. Orchestrator-Worker에서 워커가 자체 루프를 가지면 이 구조");
+      judge(g, cx, cy + 62, 118, "어느 워커에게? 종합?", "위임 대상·종합 시점은 닫힌 선택지 → 결정 모델·규칙 자리 (11)");
+      const ws = [[px + 60, py + 240, "W1", "검색"], [px + 150, py + 250, "W2", "분석"], [px + 240, py + 250, "W3", "작성"], [px + 330, py + 240, "W4", "검토"]];
+      ws.forEach(([x, y, l, r]) => { agent(g, x, y, l, r, "", "워커: 자체 ReAct/Tool-use 루프. 컨텍스트는 부분 과업만. 출력은 스키마 검증"); edge(g, cx, cy + 73, x, y, "", 0, 22); ret(g, x, y, cx, cy + 73, 7); });
+      stateBox(g, px + 20, py + 300, 340, 30, "Supervisor 상태: 과업 목록 · 워커 결과 · 종합 초안", "공유 상태는 Supervisor만 쓴다. 워커에게는 부분 과업만 투영");
+    }},
+  { name: "Hierarchical", sub: "Supervisor의 Supervisor. 팀 단위 다층화", href: P3 + "07-multi-agent-orchestration.md",
+    ctrl: "제어: 계층별 조정자, 위로 요약 전달", state: "상태: 계층별, 상위로 갈수록 요약", fit: "적합: 역할 7개 이상, 도메인 팀 구분 명확", bad: "부적합: 작은 과업, 계층 간 정보 손실 민감", fail: "실패: 계층마다 요약 손실, 지연 누적, 깊이 폭발",
+    draw(g, px, py) {
+      const top = [px + 190, py + 80];
+      agent(g, top[0], top[1], "Top", "총괄", "sup", "최상위 조정자: 팀 단위로 위임. 팀 결과의 요약만 받는다");
+      judge(g, top[0], top[1] + 54, 90, "어느 팀에게?", "팀 배정 판정 → 결정 모델·규칙 자리. 깊이 상한 필수");
+      const teams = [[px + 95, py + 190, "T-A", "데이터 팀"], [px + 285, py + 190, "T-B", "응답 팀"]];
+      teams.forEach(([x, y, l, r], i) => {
+        agent(g, x, y, l, r, "sup", "팀 조정자: 자기 팀 워커에게 위임, 상위에는 요약 보고. 요약마다 정보 손실");
+        edge(g, top[0], top[1] + 65, x, y, "", 0, 22); ret(g, x, y, top[0], top[1] + 65, 7);
+        const ws = [[x - 55, y + 100], [x, y + 110], [x + 55, y + 100]];
+        ws.forEach(([wx, wy], k) => { agent(g, wx, wy, "W", "", "", "워커: 팀 내 전문 역할. 컨텍스트 최소"); edge(g, x, y, wx, wy); ret(g, wx, wy, x, y, 6); });
+      });
+      text(px + 190, py + 330, "깊이 2 = 조정 호출 2배 · 요약 손실 2회. 깊이 3 이상은 재검토", "meta", g, "middle");
+    }},
+  { name: "Handoff (Swarm)", sub: "현재 에이전트가 다음 에이전트에게 제어를 넘김. 중앙 없음", href: P3 + "07-multi-agent-orchestration.md",
+    ctrl: "제어: 이동 (현재 에이전트가 다음을 지명)", state: "상태: 대화 히스토리(일부)가 함께 이동", fit: "적합: 대화형, 전문가가 자연스럽게 바뀜 (접수→기술→결제)", bad: "부적합: 병렬 처리, 종합 필요, 복잡 흐름", fail: "실패: 순환 핸드오프, 컨텍스트 유실, 흐름 추적 어려움",
+    draw(g, px, py) {
+      const chain = [[px + 60, py + 150, "접수", "triage"], [px + 190, py + 150, "기술", "support"], [px + 320, py + 150, "결제", "billing"]];
+      chain.forEach(([x, y, l, r], i) => {
+        agent(g, x, y, l, r, i === 0 ? "sup" : "", "에이전트 " + l + ": 자기 역할이 끝나면 다음 에이전트를 지명해 제어를 넘긴다. Swarm → OpenAI Agents SDK의 handoff");
+        if (i < chain.length - 1) {
+          edge(g, x, y, chain[i + 1][0], chain[i + 1][1]);
+          judge(g, (x + chain[i + 1][0]) / 2, y - 40, 92, "핸드오프?", "핸드오프 여부·대상은 닫힌 선택지 → 결정 모델·규칙 자리. 순환 상한 필수");
+        }
+      });
+      // 되돌아가는 핸드오프 (순환 위험)
+      el("path", { d: `M${px + 320},${py + 172} C${px + 320},${py + 240} ${px + 60},${py + 240} ${px + 60},${py + 172}`, class: "e ret" }, g);
+      text(px + 190, py + 236, "되돌림 핸드오프 — 순환 감지·상한 없으면 종료 불능", "meta", g, "middle");
+      // 메시지 페이로드
+      stateBox(g, px + 20, py + 270, 340, 44, "핸드오프 페이로드 (스키마): 사용자 의도 · 제약 · 지금까지의 결정", "메시지 전달 방식. 전달할 컨텍스트를 스키마로 명시하지 않으면 사용자 의도가 유실된다");
+      text(px + 30, py + 304, "히스토리 전체가 아니라 필요한 것만 이동", "meta", g);
+    }},
+  { name: "그래프 (공유 상태)", sub: "노드·간선을 명시, 엔진이 실행. 모든 노드가 공유 상태를 읽고 씀", href: P3 + "07-multi-agent-orchestration.md",
+    ctrl: "제어: 간선 조건 (코드) — Symbolic[Neural]", state: "상태: 공유 상태 객체 + 체크포인트", fit: "적합: 복잡 흐름, 재현·체크포인트·내구 실행 필요", bad: "부적합: 단순 흐름(과잉), 학습 곡선 부담", fail: "실패: 상태 스키마 비대, 간선 조건 디버깅",
+    draw(g, px, py) {
+      stateBox(g, px + 20, py + 60, 340, 40, "공유 상태 (스키마): 질의 · 검색 결과 · 초안 · 검증 결과 · 승인 여부", "모든 노드가 읽고 쓴다. LangGraph의 방향 그래프 + 공유 상태 + 체크포인팅·내구 실행 [2차]. 에이전트별로 필요한 뷰만 투영");
+      const nodes = { r: [px + 60, py + 170, "라우팅", "02"], s: [px + 160, py + 150, "검색", "03"], g: [px + 260, py + 150, "생성", "04"], v: [px + 330, py + 230, "검증", "10"], h: [px + 200, py + 260, "HITL", "12"] };
+      for (const k in nodes) { const [x, y, l, r] = nodes[k]; agent(g, x, y, l, r, k === "h" ? "ext" : "", "노드 " + l + ": 에이전트 또는 함수. 상태를 읽고 갱신. 간선 조건은 코드가 평가"); }
+      // 상태 ↔ 노드 (얇은 점선)
+      [nodes.r, nodes.s, nodes.g].forEach(([x, y]) => el("path", { d: `M${x},${y - 22} L${x},${py + 100}`, class: "e ret" }, g));
+      edge(g, ...nodes.r.slice(0, 2), ...nodes.s.slice(0, 2), "cond");
+      edge(g, ...nodes.s.slice(0, 2), ...nodes.g.slice(0, 2), "cond");
+      edge(g, ...nodes.g.slice(0, 2), ...nodes.v.slice(0, 2), "cond");
+      edge(g, ...nodes.v.slice(0, 2), ...nodes.h.slice(0, 2), "cond");
+      edge(g, ...nodes.h.slice(0, 2), ...nodes.s.slice(0, 2), "cond ret");
+      text(px + 150, py + 222, "불합격 → 재검색", "cond-t", g, "end");
+      text((nodes.g[0] + nodes.v[0]) / 2 + 20, (nodes.g[1] + nodes.v[1]) / 2 - 8, "검증 필요?", "cond-t", g, "middle");
+      text(px + 190, py + 322, "간선 조건은 코드 → 재현·회귀 테스트 가능. 체크포인트로 실패 지점부터 재개", "meta", g, "middle");
+    }},
+];
+
+const PW = 380, PH = 410, GX = 30, GY = 30, OX = 20, OY = 10;
+// 2x2 배치 + 오른쪽에 A2A/비교 열
+PANELS.forEach((p, i) => {
+  const col = i % 2, row = Math.floor(i / 2);
+  const px = OX + col * (PW + GX), py = OY + row * (PH + GY);
+  const g = el("g", { class: "panel-g", tabindex: "0", role: "link" });
+  el("rect", { x: px, y: py, width: PW, height: PH, class: "panel" }, g);
+  el("rect", { x: px, y: py, width: PW, height: 6, fill: "var(--reasoning)", rx: 3 }, g);
+  text(px + 16, py + 30, p.name, "p-title", g);
+  text(px + 16, py + 48, p.sub, "p-sub", g);
+  const go = () => { window.location.href = BASE + p.href; };
+  g.addEventListener("click", go);
+  g.addEventListener("keydown", e => { if (e.key === "Enter") go(); });
+  g.addEventListener("mousemove", e => showTip(e, p.name + " — " + p.sub + "  →  " + p.href));
+  g.addEventListener("mouseleave", hideTip);
+  p.draw(g, px, py);
+  [p.ctrl, p.state, p.fit, p.bad, p.fail].forEach((s, j) => text(px + 16, py + PH - 72 + j * 15, s, "meta", g));
+});
+
+// 오른쪽 열: A2A + 선택 가이드
+(function () {
+  const x = OX + 2 * (PW + GX), y = OY, w = 1240 - x - 20, h = 2 * PH + GY;
+  const g = el("g", {});
+  el("rect", { x, y, width: w, height: h, class: "panel", style: "cursor:default" }, g);
+  el("rect", { x, y, width: w, height: 6, fill: "var(--interaction)", rx: 3 }, g);
+  text(x + 16, y + 30, "조직 간: A2A", "p-title", g).setAttribute("fill", "var(--interaction)");
+  text(x + 16, y + 48, "다른 조직·벤더 에이전트와 연동할 때만", "p-sub", g);
+  // 내부 시스템 ↔ 외부 에이전트
+  agent(g, x + 70, y + 120, "우리", "Supervisor", "sup", "우리 시스템의 조정자. 내부 하위 에이전트는 함수 호출·프레임워크 메커니즘으로 충분");
+  agent(g, x + w - 70, y + 120, "타사", "A2A 서버", "ext", "타 조직 에이전트. Agent Card로 능력 공개, 태스크 생명주기·메시지·아티팩트 교환. Google 2025-04 → Linux Foundation 2025-06 이관, 100+ 기업 [2차]");
+  edge(g, x + 70, y + 120, x + w - 70, y + 120, "msg");
+  ret(g, x + w - 70, y + 120, x + 70, y + 120, 8);
+  text(x + w / 2, y + 100, "Agent Card 발견 → 태스크 생성", "meta", g, "middle");
+  text(x + w / 2, y + 150, "메시지 · 아티팩트 (타입드)", "meta", g, "middle");
+  const notes = [
+    "• MCP(툴·데이터)와 보완. 에이전트를 '툴처럼'",
+    "  부를 수도 있지만 태스크 생명주기·협상·",
+    "  장기 실행이 필요하면 A2A",
+    "• 1.0 도달 정황(A2UI 언급)은 있으나",
+    "  전용 발표 미확인 [2차]",
+    "• 보안은 프로토콜 밖 — 인증·권한·감사 별도",
+    "• 메시지 전달 방식이 자연스러움",
+  ];
+  notes.forEach((s, k) => text(x + 16, y + 190 + k * 16, s, "meta", g));
+
+  // 선택 가이드
+  text(x + 16, y + 330, "선택 가이드", "p-title", g);
+  const guide = [
+    ["한계 미측정", "→ 멀티 에이전트 도입하지 않음"],
+    ["역할 다르나 순서 고정", "→ 워크플로우 체이닝 (05)"],
+    ["역할 3~6, 중앙 종합", "→ Supervisor"],
+    ["역할 7+, 팀 구분", "→ Hierarchical"],
+    ["대화 중 전문가 전환", "→ Handoff (순환 상한)"],
+    ["복잡 흐름, 재현·체크포인트", "→ 그래프 + 공유 상태"],
+    ["타 조직 에이전트", "→ A2A + 메시지"],
+    ["판단이 어려우면", "→ Supervisor + 최소 공유 상태"],
+  ];
+  guide.forEach(([a, b], k) => {
+    const t = el("text", { x: x + 16, y: y + 356 + k * 30, class: "meta" }, g);
+    const s1 = el("tspan", { x: x + 16, dy: 0 }, t); s1.textContent = a; s1.style.fill = "var(--fg)"; s1.style.fontWeight = "600";
+    const s2 = el("tspan", { x: x + 16, dy: 14 }, t); s2.textContent = b;
+  });
+
+  // 공유 상태 vs 메시지
+  const sy = y + 606;
+  text(x + 16, sy, "공유 상태 vs 메시지 전달", "p-title", g);
+  [
+    "공유 상태: 전역 일관성·체크포인트 용이.",
+    "  동시 갱신 충돌, 스키마 비대, 권한 문제.",
+    "  → 그래프 · Supervisor",
+    "메시지: 결합도 낮음, 컨텍스트 최소,",
+    "  조직 간에 자연스러움. 전역 뷰 없음,",
+    "  유실·순서 문제. → Handoff · Hierarchical · A2A",
+    "절충: 공유 상태는 스키마로 최소화,",
+    "  에이전트에겐 필요한 뷰만 투영 (08)",
+  ].forEach((s, k) => text(x + 16, sy + 22 + k * 15, s, "meta", g));
+})();
+
+// 하단 노트
+(function () {
+  const y = OY + 2 * (PH + GY) + 6;
+  text(OX, y, "비용 = 에이전트 수 × 루프 수 × 조정 호출. 디버깅 = 상관 ID로 전체 트레이스 (OTel invoke_agent 스팬, 2026-10 현재 전 속성 Development 등급 [2차]). 총 호출·깊이·시간 상한과 순환 감지는 모든 토폴로지에 공통.", "meta");
+})();
+</script>
+</body>
+</html>

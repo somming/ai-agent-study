@@ -10,7 +10,7 @@ updated: 2026-10-11
 
 # Part 2. AI 기반 데이터 파이프라인 및 근거 데이터 설계
 
-> **시각화**: `assets/html/data-pipeline-architecture.html` (예정)
+> **시각화**: [`assets/html/data-pipeline-architecture.html`](../assets/html/data-pipeline-architecture.html)
 > Knowledge Layer. 에이전트가 **무엇을 근거로** 판단할지를 만드는 파이프라인. 이 Part의 산출물은 "검색 가능한 인덱스"가 아니라 **"답변에 인용할 수 있는 근거 단위"** 다.
 
 ## 이 Part의 역할

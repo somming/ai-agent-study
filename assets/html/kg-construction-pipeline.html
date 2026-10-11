@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Part 2/05 · 지식그래프 구축 파이프라인</title>
+<style>
+  /* 레이어 색상은 작성 가이드 7절과 동일하게 고정 (reference-architecture.html과 같은 변수) */
+  :root {
+    --bg: #fafaf8; --fg: #1d1d1b; --muted: #6b6b6b; --line: #d9d9d4; --card: #ffffff;
+    --knowledge: #2E7D6B; --reasoning: #3A5FA8; --interaction: #B5651D; --cross: #6B6B6B;
+    --trend: #8E44AD; --neural: #3A5FA8; --symbolic: #2E7D6B; --reject: #B5651D;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #15161a; --fg: #ececea; --muted: #9a9a95; --line: #33353b; --card: #1e2026; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.5 -apple-system, "Pretendard", "Noto Sans KR", system-ui, sans-serif; }
+  header { padding: 20px 28px 8px; }
+  header h1 { margin: 0 0 4px; font-size: 20px; font-weight: 650; }
+  header p { margin: 0; color: var(--muted); }
+  .legend { display: flex; gap: 16px; flex-wrap: wrap; padding: 8px 28px 0; color: var(--muted); font-size: 12px; }
+  .legend span::before { content: ""; display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: -1px; background: var(--c); }
+  .legend span.dash::before { background: transparent; border: 2px dashed var(--c); width: 8px; height: 8px; }
+  .wrap { padding: 12px 28px 16px; }
+  svg { width: 100%; height: auto; display: block; }
+  .layer-bg { fill: var(--card); stroke: var(--line); }
+  .layer-label { font-size: 13px; font-weight: 700; letter-spacing: .02em; }
+  .layer-sub { font-size: 11px; fill: var(--muted); }
+  .zone { fill: none; stroke: var(--line); stroke-dasharray: 3 3; rx: 8; }
+  .zone-label { font-size: 11px; font-weight: 600; }
+  .node { cursor: pointer; }
+  .node rect { fill: var(--card); stroke-width: 1.5; rx: 6; }
+  .node text { font-size: 12px; fill: var(--fg); pointer-events: none; }
+  .node .idx { font-size: 10px; fill: var(--muted); }
+  .node .sub { font-size: 10px; fill: var(--muted); }
+  .node:hover rect, .node:focus rect { filter: brightness(0.96); stroke-width: 2.5; }
+  .node:focus { outline: none; }
+  .node.trend rect { stroke-dasharray: 4 3; }
+  .node.trend .idx { fill: var(--trend); }
+  .flow { stroke: var(--muted); stroke-width: 1.5; fill: none; marker-end: url(#arrow); }
+  .flow.reject { stroke: var(--reject); stroke-dasharray: 3 3; }
+  .flow.loop { stroke: var(--muted); stroke-dasharray: 5 4; }
+  .contract { fill: var(--bg); stroke: var(--line); rx: 4; }
+  .contract-text { font-size: 11px; fill: var(--fg); }
+  #tip { position: fixed; pointer-events: none; background: var(--fg); color: var(--bg); padding: 6px 10px; border-radius: 6px; font-size: 12px; max-width: 360px; opacity: 0; transition: opacity .1s; z-index: 10; }
+  footer { padding: 0 28px 24px; color: var(--muted); font-size: 12px; }
+  footer a { color: inherit; }
+  .cmp { padding: 0 28px 8px; }
+  .cmp h2 { font-size: 14px; margin: 8px 0 6px; }
+  table.cmp { border-collapse: collapse; width: 100%; font-size: 12px; }
+  table.cmp th, table.cmp td { border: 1px solid var(--line); padding: 5px 8px; text-align: left; vertical-align: top; }
+  table.cmp th { background: var(--card); }
+  code { font-size: 11px; background: var(--card); border: 1px solid var(--line); border-radius: 3px; padding: 0 4px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Part 2/05 · 지식그래프 구축 파이프라인 — 추출 → 정렬·검증 → 해소 → 적재 → 인덱싱 → 증분 루프</h1>
+  <p>노드를 클릭하면 해당 위키 페이지로 이동합니다. 파란 테두리는 신경(LLM) 단계, 초록 테두리는 기호(온톨로지·규칙) 단계입니다. 둘의 결합이 이 Part의 뉴로심볼릭 적용점입니다.</p>
+</header>
+<div class="legend">
+  <span style="--c: var(--neural)">신경 — LLM / 판정 모델</span>
+  <span style="--c: var(--symbolic)">기호 — 온톨로지 · SHACL · 규칙</span>
+  <span style="--c: var(--reject)">거부 · 미분류 버킷 (온톨로지 변경 요청의 공급원)</span>
+  <span class="dash" style="--c: var(--muted)">증분 갱신 루프 (07)</span>
+  <span class="dash" style="--c: var(--trend)">트렌드 세 축이 걸치는 단계 (온톨로지 · 뉴로심볼릭 · 결정 모델)</span>
+</div>
+<div class="wrap">
+<svg id="kg" viewBox="0 0 1240 600" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="지식그래프 구축 파이프라인">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#6b6b6b"/>
+    </marker>
+  </defs>
+</svg>
+</div>
+<div class="cmp">
+  <h2>인덱싱 방식 비교 — 구축 파이프라인 위에 올리는 세 가지</h2>
+  <table class="cmp" aria-label="GraphRAG LightRAG HippoRAG 2 비교">
+    <tr><th>항목</th><th>Microsoft GraphRAG</th><th>LightRAG</th><th>HippoRAG 2</th></tr>
+    <tr><td>그래프 구조</td><td>엔티티·관계 + 계층적 커뮤니티 + 커뮤니티 요약</td><td>엔티티·관계 그래프 + 키워드 인덱스</td><td>구절·엔티티 노드, Personalized PageRank 연상 확산</td></tr>
+    <tr><td>검색</td><td>로컬(엔티티 이웃) / 글로벌(커뮤니티 요약 집계)</td><td>저수준(엔티티) / 고수준(주제) 이중 검색</td><td>질의 엔티티에서 PPR → 구절 순위</td></tr>
+    <tr><td>인덱싱 비용 구조</td><td>추출 + 커뮤니티 요약. 비용 과다 비판 <code>[벤더]</code></td><td>추출 중심, 요약 없음. 대폭 적다는 2차 요약 (수치 인용 안 함) <code>[2차]</code></td><td>추출 + 그래프 구성. PPR은 질의 시</td></tr>
+    <tr><td>증분 갱신</td><td>커뮤니티 재계산 → 사실상 재구축</td><td><b>지원</b></td><td>노드 추가 가능, 재인덱싱 부담 작음</td></tr>
+    <tr><td>강점</td><td>코퍼스 전체 요약형 질의</td><td>비용 · 증분</td><td>최난도 멀티홉</td></tr>
+    <tr><td>검증 수준</td><td><code>[벤더]</code> <code>[2차]</code></td><td><code>[2차]</code></td><td><code>[검증]</code> arXiv 2607.11683 재분석: 우위는 대체로 포맷 효과, 포맷 통제 후 MuSiQue에서만 뚜렷 (54.4 vs 40.1)</td></tr>
+  </table>
+</div>
+<div id="tip"></div>
+<footer>
+  세 방식 모두 온톨로지 없이 동작하지만, 이 그림의 정렬·해소 단계를 거친 그래프 위에 올리는 것이 전제다. 상세는 <a href="../../02-data-pipeline/05-knowledge-graph-construction.md">05 지식그래프 구축</a>, 온톨로지 절차는 <a href="../../02-data-pipeline/06-ontology-driven-modeling.md">06 온톨로지 기반 모델링</a>, 전체 파이프라인은 <a href="data-pipeline-architecture.html">데이터 파이프라인 아키텍처</a>.
+</footer>
+
+<script>
+const BASE = "../../02-data-pipeline/";
+const NW = 148, NH = 66;
+// 노드: kind = neural | symbolic | neutral | reject
+const NODES = {
+  doc:      { x: 40,  y: 180, t: "문서 · 청크", s: "02/03 출력", d: "parent/child 청크 + 메타데이터. 서술문과 정형·표·메타를 분리해 다른 추출기로", href: "02-chunking-strategies.md", kind: "neutral" },
+  llm:      { x: 220, y: 120,  t: "LLM 추출", s: "서술문 · 스키마 프롬프트", d: "온톨로지 클래스·관계만 허용하는 프롬프트로 (주어, 관계, 목적어, 근거 문장 ID) 추출. 비용은 청크 수에 비례, 비결정적", href: "05-knowledge-graph-construction.md", kind: "neural" },
+  rule:     { x: 220, y: 240, t: "규칙 매핑", s: "정형 · 표 · 메타데이터", d: "조직도·마스터·티켓 필드 → 트리플. 결정론, 저비용. 정형 데이터를 LLM에 시키지 않는다", href: "05-knowledge-graph-construction.md", kind: "symbolic" },
+  align:    { x: 410, y: 180, t: "온톨로지 정렬", s: "클래스 · 관계 정규화", d: "추출 유형을 온톨로지 클래스에, 동의 관계를 하나로. 도메인·레인지 검사. 정의는 OWL/SHACL, 운영은 LPG + 매핑 테이블", href: "06-ontology-driven-modeling.md", kind: "symbolic", trend: true },
+  shacl:    { x: 590, y: 180, t: "SHACL / 규칙 검증", s: "카디널리티 · 필수 속성 · 근거 ID", d: "제약 위반·근거 문장 없는 트리플은 적재 거부. 뉴로심볼릭의 '기호' 절반", href: "05-knowledge-graph-construction.md", kind: "symbolic", trend: true },
+  bucket:   { x: 590, y: 320, t: "거부 · 미분류 버킷", s: "온톨로지 변경 요청 공급원", d: "스키마 밖 클래스·관계, 위반 트리플. 주기적 검토 → 온톨로지 변경 요청 또는 프롬프트 수정", href: "06-ontology-driven-modeling.md", kind: "reject" },
+  er:       { x: 770, y: 180, t: "엔티티 해소", s: "결정론 → 유사도 → 판정 → 사람", d: "ID 매칭·별칭 사전 → 블로킹+유사도 → '같은 것인가' 판정(소형 분류기 / 결정 모델 / LLM) → 저확신 사람. 병합 대신 가역적 sameAs", href: "05-knowledge-graph-construction.md", kind: "neural", trend: true },
+  load:     { x: 950, y: 180, t: "그래프 적재", s: "LPG 또는 RDF + 청크 역참조", d: "모든 트리플에 출처 문서 ID·근거 문장 ID·추출기 버전·온톨로지 버전. 근거 ID 없는 트리플은 08에서 인용 불가", href: "08-grounding-data-design.md", kind: "neutral" },
+  idx1:     { x: 1070, y: 330, t: "GraphRAG 식", s: "커뮤니티 요약 · 글로벌 질의", d: "엔티티·관계 + 계층 커뮤니티 + 요약. 인덱싱 비용 과다 비판 [벤더]. 갱신 = 사실상 재구축", href: "05-knowledge-graph-construction.md", kind: "neutral", small: true },
+  idx2:     { x: 1070, y: 410, t: "LightRAG 식", s: "이중 수준 검색 · 증분 지원", d: "저수준(엔티티)/고수준(주제) 검색, 증분 업데이트 지원 [2차]", href: "05-knowledge-graph-construction.md", kind: "neutral", small: true },
+  idx3:     { x: 1070, y: 490, t: "HippoRAG 2 식", s: "PPR 연상 · 최난도 멀티홉", d: "Personalized PageRank. 재분석(arXiv 2607.11683): 포맷 통제 후 MuSiQue에서만 뚜렷한 우위 [검증]", href: "05-knowledge-graph-construction.md", kind: "neutral", small: true },
+  change:   { x: 220, y: 470, t: "문서 변경 이벤트", s: "07 변경 큐 (upsert / delete)", d: "해당 문서 유래 트리플 삭제 → 재추출 → 재정렬 → 재해소 → 부분 재인덱싱. 노드는 참조 수 0일 때만 정리", href: "07-freshness-and-sync.md", kind: "neutral", trend: true },
+};
+
+const svg = document.getElementById("kg");
+const NS = "http://www.w3.org/2000/svg";
+const tip = document.getElementById("tip");
+function el(name, attrs, parent) { const e = document.createElementNS(NS, name); for (const k in attrs) e.setAttribute(k, attrs[k]); (parent || svg).appendChild(e); return e; }
+function text(x, y, str, cls, parent, anchor) { const t = el("text", { x, y, class: cls || "", "text-anchor": anchor || "start" }, parent); t.textContent = str; return t; }
+function bindLink(g, n) {
+  g.setAttribute("tabindex", "0"); g.setAttribute("role", "link");
+  const go = () => { window.location.href = BASE + n.href; };
+  g.addEventListener("click", go);
+  g.addEventListener("keydown", e => { if (e.key === "Enter") go(); });
+  g.addEventListener("mousemove", e => { tip.textContent = n.d + "  →  " + n.href; tip.style.left = (e.clientX + 12) + "px"; tip.style.top = (e.clientY + 12) + "px"; tip.style.opacity = 1; });
+  g.addEventListener("mouseleave", () => tip.style.opacity = 0);
+}
+const COLOR = { neural: "var(--neural)", symbolic: "var(--symbolic)", neutral: "var(--muted)", reject: "var(--reject)" };
+function node(n) {
+  const g = el("g", { class: "node" + (n.trend ? " trend" : "") });
+  const h = n.small ? 52 : NH;
+  el("rect", { x: n.x, y: n.y, width: NW, height: h, stroke: COLOR[n.kind] }, g);
+  text(n.x + 8, n.y + (n.small ? 20 : 24), n.t, "", g);
+  text(n.x + 8, n.y + (n.small ? 38 : 44), n.s, "sub", g);
+  n._h = h;
+  bindLink(g, n);
+}
+function flow(x1, y1, x2, y2, cls, mid) {
+  const mx = mid !== undefined ? mid : (x1 + x2) / 2;
+  const d = y1 === y2 ? `M${x1},${y1} L${x2},${y2}` : `M${x1},${y1} L${mx},${y1} L${mx},${y2} L${x2},${y2}`;
+  return el("path", { d, class: "flow " + (cls || "") });
+}
+function label(x, y, str) {
+  const g = el("g", {}); const tw = str.length * 6.6 + 16;
+  el("rect", { x: x - tw / 2, y: y - 11, width: tw, height: 20, class: "contract" }, g);
+  text(x, y + 3, str, "contract-text", g, "middle");
+}
+
+// 레이어 배경
+(function () {
+  const g = el("g", {});
+  el("rect", { x: 20, y: 40, width: 1200, height: 540, class: "layer-bg", rx: 10 }, g);
+  el("rect", { x: 20, y: 40, width: 6, height: 540, fill: "var(--knowledge)", rx: 3 }, g);
+  text(38, 62, "Knowledge · 그래프 경로", "layer-label", g).setAttribute("fill", "var(--knowledge)");
+  text(38, 80, "입력: 청크 + 메타데이터 / 출력: 근거 ID가 붙은 트리플 + 그래프 인덱스 → 08 근거 단위(트리플·경로)", "layer-sub", g);
+  // 구역: 추출(신경) / 정렬·검증(기호) / 인덱싱
+  el("rect", { x: 205, y: 100, width: 180, height: 220, class: "zone" }, g);
+  text(215, 116, "① 추출 — 하이브리드", "zone-label", g).setAttribute("fill", "var(--neural)");
+  el("rect", { x: 395, y: 100, width: 360, height: 300, class: "zone" }, g);
+  text(405, 116, "② 정렬 · 검증 — 기호 (뉴로심볼릭 2단계)", "zone-label", g).setAttribute("fill", "var(--symbolic)");
+  el("rect", { x: 1055, y: 300, width: 180, height: 260, class: "zone" }, g);
+  text(1065, 316, "⑤ 인덱싱 방식 (택 1, 비교는 아래 표)", "zone-label", g).setAttribute("fill", "var(--muted)");
+})();
+
+Object.values(NODES).forEach(node);
+
+// 흐름
+const N = NODES, R = n => ({ l: n.x, r: n.x + NW, cx: n.x + NW / 2, cy: n.y + n._h / 2, t: n.y, b: n.y + n._h });
+flow(R(N.doc).r, R(N.doc).cy, R(N.llm).l, R(N.llm).cy, "", 205);
+flow(R(N.doc).r, R(N.doc).cy, R(N.rule).l, R(N.rule).cy, "", 205);
+flow(R(N.llm).r, R(N.llm).cy, R(N.align).l, R(N.align).cy, "", 395);
+flow(R(N.rule).r, R(N.rule).cy, R(N.align).l, R(N.align).cy, "", 395);
+label(395, R(N.align).cy - 45, "후보 트리플 + 근거 문장 ID");
+flow(R(N.align).r, R(N.align).cy, R(N.shacl).l, R(N.shacl).cy);
+// 거부 경로
+el("path", { d: `M${R(N.shacl).cx},${R(N.shacl).b} L${R(N.shacl).cx},${R(N.bucket).t}`, class: "flow reject" });
+el("path", { d: `M${R(N.align).cx},${R(N.align).b} L${R(N.align).cx},${R(N.bucket).cy} L${R(N.bucket).l},${R(N.bucket).cy}`, class: "flow reject" });
+label(500, 300, "스키마 밖 · 위반 · 근거 없음 → 거부");
+// 버킷 → 온톨로지 변경 요청 (정렬로 되돌아감)
+el("path", { d: `M${R(N.bucket).l},${R(N.bucket).b - 10} L${R(N.align).cx - 40},${R(N.bucket).b - 10} L${R(N.align).cx - 40},${R(N.align).b}`, class: "flow loop" });
+label(470, 402, "검토 → 온톨로지 변경 요청 (06)");
+// 검증 → 해소 → 적재
+flow(R(N.shacl).r, R(N.shacl).cy, R(N.er).l, R(N.er).cy);
+flow(R(N.er).r, R(N.er).cy, R(N.load).l, R(N.load).cy);
+label(860, 150, "정규 ID · 가역적 sameAs");
+// 적재 → 인덱싱 3종
+flow(R(N.load).cx, R(N.load).b, R(N.idx1).l, R(N.idx1).cy, "", R(N.load).cx);
+flow(R(N.load).cx, R(N.load).b, R(N.idx2).l, R(N.idx2).cy, "", R(N.load).cx);
+flow(R(N.load).cx, R(N.load).b, R(N.idx3).l, R(N.idx3).cy, "", R(N.load).cx);
+// 적재 → 08 (레이어 밖으로)
+el("path", { d: `M${R(N.load).r},${R(N.load).cy} L1200,${R(N.load).cy} L1200,46`, class: "flow" });
+label(1070, 100, "→ 08 근거 단위: 트리플 · 경로 (근거 문장 필수)");
+// 증분 루프: 변경 이벤트 → 적재(삭제) → 추출(재추출)
+el("path", { d: `M${R(N.change).r},${R(N.change).cy} L${R(N.load).cx - 30},${R(N.change).cy} L${R(N.load).cx - 30},${R(N.load).b}`, class: "flow loop" });
+label(650, R(N.change).cy, "① 해당 문서 유래 트리플 삭제 (출처 doc_id)");
+el("path", { d: `M${R(N.change).cx},${R(N.change).t} L${R(N.change).cx},${R(N.rule).b}`, class: "flow loop" });
+label(330, 430, "② 재추출 → 재정렬 → 재해소 → 부분 재인덱싱");
+el("path", { d: `M${R(N.doc).cx},${R(N.doc).b} L${R(N.doc).cx},${R(N.change).cy} L${R(N.change).l},${R(N.change).cy}`, class: "flow loop" });
+label(114, 380, "07 변경 큐");
+</script>
+</body>
+</html>

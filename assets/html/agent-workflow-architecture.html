@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Part 3. Agent 워크플로우 전체도</title>
+<style>
+  /* 레이어 색상은 작성 가이드 7절과 동일하게 고정 */
+  :root {
+    --bg: #fafaf8; --fg: #1d1d1b; --muted: #6b6b6b; --line: #d9d9d4; --card: #ffffff;
+    --knowledge: #2E7D6B; --reasoning: #3A5FA8; --interaction: #B5651D; --cross: #6B6B6B;
+    --trend: #8E44AD;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #15161a; --fg: #ececea; --muted: #9a9a95; --line: #33353b; --card: #1e2026; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.5 -apple-system, "Pretendard", "Noto Sans KR", system-ui, sans-serif; }
+  header { padding: 20px 28px 8px; }
+  header h1 { margin: 0 0 4px; font-size: 20px; font-weight: 650; }
+  header p { margin: 0; color: var(--muted); }
+  .legend { display: flex; gap: 16px; flex-wrap: wrap; padding: 8px 28px 0; color: var(--muted); font-size: 12px; }
+  .legend span::before { content: ""; display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: -1px; background: var(--c); }
+  .legend span.dash::before { background: transparent; border: 2px dashed var(--trend); width: 8px; height: 8px; }
+  .wrap { padding: 12px 28px 28px; }
+  svg { width: 100%; height: auto; display: block; }
+  .zone { fill: var(--card); stroke: var(--line); rx: 10; }
+  .zone-label { font-size: 13px; font-weight: 700; letter-spacing: .02em; }
+  .zone-sub { font-size: 11px; fill: var(--muted); }
+  .node { cursor: pointer; }
+  .node rect { fill: var(--card); stroke-width: 1.5; rx: 6; }
+  .node text { font-size: 12px; fill: var(--fg); pointer-events: none; }
+  .node .idx { font-size: 10px; fill: var(--muted); }
+  .node:hover rect, .node:focus rect { filter: brightness(0.96); stroke-width: 2.5; }
+  .node:focus { outline: none; }
+  .node.trend rect { stroke-dasharray: 4 3; }
+  .flow { stroke: var(--muted); stroke-width: 1.5; fill: none; marker-end: url(#arrow); }
+  .flow.back { stroke-dasharray: 3 3; }
+  .flow-label { font-size: 11px; fill: var(--muted); }
+  .contract { fill: var(--bg); stroke: var(--line); rx: 4; }
+  .contract-text { font-size: 11px; fill: var(--fg); }
+  #tip { position: fixed; pointer-events: none; background: var(--fg); color: var(--bg); padding: 6px 10px; border-radius: 6px; font-size: 12px; max-width: 340px; opacity: 0; transition: opacity .1s; z-index: 10; }
+  footer { padding: 0 28px 24px; color: var(--muted); font-size: 12px; }
+  footer a { color: inherit; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Part 3. Agent 워크플로우 설계 및 LLM/RAG 파이프라인 — 전체도</h1>
+  <p>노드를 클릭하면 해당 위키 페이지로 이동합니다. 가운데 줄이 요청 1건이 흐르는 실행 경로, 위아래가 그 경로를 감싸는 프레임과 상태·조정·검증 레이어입니다.</p>
+</header>
+<div class="legend">
+  <span style="--c: var(--reasoning)">Reasoning / Action — 실행 경로</span>
+  <span style="--c: var(--knowledge)">Knowledge — Part 2에서 받는 근거</span>
+  <span style="--c: var(--interaction)">Interaction — Part 4로 넘기는 응답</span>
+  <span style="--c: var(--cross)">프레임·운영 — 설계 결정과 평가</span>
+  <span class="dash">트렌드 세 축 (온톨로지 · 뉴로심볼릭 · 결정 모델)</span>
+</div>
+<div class="wrap">
+<svg id="arch" viewBox="0 0 1240 640" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Part 3 Agent 워크플로우 전체도">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#6b6b6b"/>
+    </marker>
+  </defs>
+</svg>
+</div>
+<div id="tip"></div>
+<footer>
+  입력 계약: Part 2의 <b>근거 단위(evidence) 스키마</b>. 출력 계약: Part 4가 소비하는 <b>렌더 가능한 응답 스키마</b>(텍스트 + citations + ui_intent). 개요는 <a href="../../03-agent-workflow-rag/00-overview.md">Part 3 개요</a>, 전체 3-Layer는 <a href="reference-architecture.html">레퍼런스 아키텍처</a>.
+</footer>
+
+<script>
+// ---- 데이터 (링크는 assets/html/ 기준 상대 경로) ----
+const BASE = "../../";
+const P3 = "03-agent-workflow-rag/";
+
+// 가운데 실행 경로 (왼쪽 → 오른쪽)
+const PIPE = [
+  { t: "질의 이해·라우팅", i: "3/02", d: "한국어 정규화 → 규칙 라우팅 → 결정 모델·분류기 라우팅 → 재작성·분해·HyDE. 출력: 질의 집합 + 경로 + 확신도", href: P3 + "02-query-understanding.md" },
+  { t: "검색·리랭킹", i: "3/03", d: "ACL pre-filter → BM25 + dense → RRF → cross-encoder → 점수 컷오프 → 압축. 출력: 근거 단위 묶음", href: P3 + "03-retrieval-reranking.md" },
+  { t: "생성·근거 강제", i: "3/04", d: "구조화 출력 citation → 규칙 검증 → NLI·결정 모델 정합성 검증 → abstain. 출력: 응답 스키마", href: P3 + "04-generation-grounding.md" },
+  { t: "툴 / MCP", i: "3/09", d: "함수 호출·MCP 서버, 툴 스키마, 멱등성·재시도, 권한 모델. 에이전트 루프 안에서 반복 호출", href: P3 + "09-tools-and-mcp.md" },
+  { t: "뉴로심볼릭 검증", i: "3/10", d: "LLM 출력 → JSON Schema → 규칙·온톨로지·제약 솔버 검증. 불합격 시 오류 구조화 → 재생성", href: P3 + "10-neuro-symbolic-reasoning.md", trend: true },
+  { t: "가드레일·HITL", i: "3/12", d: "정책 엔진 게이트 ∧ 결정 모델 확신 ≥ θ → 실행. 확신 낮음 → 사람 승인", href: P3 + "12-guardrails-hitl.md", trend: true },
+];
+// 결정 레이어는 파이프라인 아래에 가로로 걸침
+const DECISION = { t: "결정 레이어 (System One) — 라우팅 · 게이팅 · 다음 행동 · 승인 필요 판정", i: "3/11", d: "Jev · OpenAI Decisions API · 파인튜닝 분류기 · 규칙. 선택지가 닫힌 판정을 생성 없이. 02·06·07·12의 분기 노드가 이 레이어를 호출", href: P3 + "11-decision-layer.md", trend: true };
+
+// 위쪽 프레임: 자율성 수준과 패턴
+const FRAME = [
+  { t: "워크플로우 vs 에이전트", i: "3/05", d: "결정론 ↔ 자율성 스펙트럼. 어느 간선을 코드가, 어느 간선을 모델이 잇는가를 먼저 결정", href: P3 + "05-workflow-vs-agent.md" },
+  { t: "RAG 아키텍처 패턴", i: "3/01", d: "Naive → Advanced → Modular → Agentic, GraphRAG 계열, 롱컨텍스트. 질의 복잡도별 배정표", href: P3 + "01-rag-architecture-patterns.md" },
+  { t: "에이전트 설계 패턴", i: "3/06", d: "ReAct · Plan-and-Execute · Reflection · Tool-use · Router · Orchestrator-Worker. 루프 구조와 호출 수", href: P3 + "06-agent-design-patterns.md" },
+  { t: "멀티 에이전트 오케스트레이션", i: "3/07", d: "Supervisor · Hierarchical · Handoff · 그래프. 공유 상태 vs 메시지, A2A", href: P3 + "07-multi-agent-orchestration.md" },
+];
+// 오른쪽 세로: 상태·메모리
+const STATE = { t: "상태·메모리·컨텍스트", i: "3/08", d: "체크포인팅, 단기/장기 메모리, compaction, 컨텍스트 엔지니어링. 모든 단계가 읽고 쓰는 상태", href: P3 + "08-state-memory-context.md" };
+// 아래쪽 운영
+const OPS = [
+  { t: "RAG·에이전트 평가", i: "3/13", d: "faithfulness · context precision · LLM-as-judge · 트래젝토리 평가 · 회귀 테스트", href: P3 + "13-evaluation-rag-agents.md" },
+  { t: "프레임워크 비교", i: "3/14", d: "LangGraph · Claude Agent SDK · OpenAI Agents SDK · Google ADK · CrewAI · Pydantic AI · 직접 구현", href: P3 + "14-frameworks-landscape.md" },
+  { t: "결정 매트릭스", i: "3/99", d: "요구사항 × 패턴 × 프레임워크 종합", href: P3 + "99-decision-matrix.md" },
+];
+const IN = { t: "근거 단위 + 인덱스 + 접근 정책", i: "Part 2", d: "Knowledge 레이어가 넘기는 입력 계약", href: "02-data-pipeline/08-grounding-data-design.md" };
+const OUT = { t: "렌더 가능한 응답 스키마", i: "Part 4", d: "텍스트 + citations + ui_intent. Interaction 레이어가 소비", href: "04-dynamic-ui/00-overview.md" };
+
+// ---- 렌더 ----
+const svg = document.getElementById("arch");
+const NS = "http://www.w3.org/2000/svg";
+const tip = document.getElementById("tip");
+
+function el(name, attrs, parent) {
+  const e = document.createElementNS(NS, name);
+  for (const k in attrs) e.setAttribute(k, attrs[k]);
+  (parent || svg).appendChild(e);
+  return e;
+}
+function text(x, y, str, cls, parent, anchor) {
+  const t = el("text", { x, y, class: cls || "", "text-anchor": anchor || "start" }, parent);
+  t.textContent = str; return t;
+}
+function wrapText(x, y, str, maxChars, g, lineH) {
+  // 글자 수 기준 줄바꿈 (한국어 혼용 텍스트용)
+  const words = str.split(" "); const lines = []; let cur = "";
+  for (const w of words) {
+    if ((cur + " " + w).trim().length > maxChars && cur) { lines.push(cur); cur = w; } else { cur = (cur + " " + w).trim(); }
+  }
+  if (cur) lines.push(cur);
+  lines.forEach((ln, k) => text(x, y + k * (lineH || 15), ln, "", g));
+  return lines.length;
+}
+function node(n, x, y, w, h, color, parent, maxChars) {
+  const g = el("g", { class: "node" + (n.trend ? " trend" : ""), tabindex: "0", role: "link" }, parent);
+  el("rect", { x, y, width: w, height: h, stroke: n.trend ? "var(--trend)" : color }, g);
+  if (n.i) text(x + 8, y + 14, n.i, "idx", g);
+  wrapText(x + 8, y + (n.i ? 32 : 24), n.t, maxChars || Math.floor(w / 12), g);
+  const go = () => { window.location.href = BASE + n.href; };
+  g.addEventListener("click", go);
+  g.addEventListener("keydown", e => { if (e.key === "Enter") go(); });
+  g.addEventListener("mousemove", e => { tip.textContent = n.d + "  →  " + n.href; tip.style.left = (e.clientX + 12) + "px"; tip.style.top = (e.clientY + 12) + "px"; tip.style.opacity = 1; });
+  g.addEventListener("mouseleave", () => tip.style.opacity = 0);
+  return g;
+}
+function zone(x, y, w, h, label, sub, color) {
+  const g = el("g", {});
+  el("rect", { x, y, width: w, height: h, class: "zone" }, g);
+  el("rect", { x, y, width: 6, height: h, fill: color, rx: 3 }, g);
+  text(x + 18, y + 22, label, "zone-label", g).setAttribute("fill", color);
+  if (sub) text(x + 18, y + 40, sub, "zone-sub", g);
+  return g;
+}
+function flow(x1, y1, x2, y2, cls) { el("path", { d: `M${x1},${y1} L${x2},${y2}`, class: "flow " + (cls || "") }); }
+function label(lx, ly, str) {
+  const g = el("g", {}); const tw = str.length * 6.6 + 16;
+  el("rect", { x: lx - tw / 2, y: ly - 11, width: tw, height: 20, class: "contract" }, g);
+  text(lx, ly + 3, str, "contract-text", g, "middle");
+}
+
+// 위쪽 프레임 존
+zone(40, 20, 1000, 120, "설계 프레임 — 먼저 결정하는 것", "05 자율성 수준 → 01 RAG 패턴 → 06 루프 구조 → 07 토폴로지. 실행 경로의 '어느 간선을 모델이 잇는가'를 정한다", "var(--cross)");
+(function () {
+  const pad = 18, gap = 12, top = 74, w = (1000 - pad * 2 - gap * 3) / 4;
+  FRAME.forEach((n, k) => node(n, 40 + pad + k * (w + gap), top, w, 52, "var(--cross)", null, 22));
+})();
+
+// 가운데 실행 경로 존
+zone(40, 170, 1000, 250, "실행 경로 — 요청 1건이 흐르는 길", "Reasoning / Action. 각 노드의 분기 판정은 아래 결정 레이어가, 상태는 오른쪽 메모리가 맡는다", "var(--reasoning)");
+(function () {
+  const pad = 18, gap = 14, top = 226, h = 62, w = (1000 - pad * 2 - gap * 5) / 6;
+  PIPE.forEach((n, k) => {
+    const x = 40 + pad + k * (w + gap);
+    node(n, x, top, w, h, "var(--reasoning)", null, 11);
+    if (k < PIPE.length - 1) flow(x + w, top + h / 2, x + w + gap, top + h / 2);
+  });
+  // 에이전트 루프 되돌림 (툴 결과 → 질의/검색 재진입)
+  const x09 = 40 + pad + 3 * (w + gap) + w / 2, x02 = 40 + pad + w / 2;
+  el("path", { d: `M${x09},${top + h} C${x09},${top + h + 36} ${x02},${top + h + 36} ${x02},${top + h + 2}`, class: "flow back" });
+  text((x09 + x02) / 2, top + h + 30, "에이전트 루프: 관찰 → 재라우팅·재검색 (06, 상한 필수)", "flow-label", null, "middle");
+  // 결정 레이어 (가로 바)
+  node(DECISION, 40 + pad, 356, 1000 - pad * 2, 50, "var(--reasoning)", null, 80);
+  // 결정 레이어 ↔ 02, 06루프, 12 연결 점선
+  [0, 5].forEach(k => { const cx = 40 + pad + k * (w + gap) + w / 2; el("path", { d: `M${cx},${top + h} L${cx},356`, class: "flow back" }); });
+})();
+
+// 입력 (왼쪽 Part 2) / 출력 (오른쪽 Part 4)
+(function () {
+  // Part 2 입력은 실행 경로 아래 왼쪽
+  node(IN, 40, 450, 240, 56, "var(--knowledge)", null, 20);
+  flow(160, 450, 160, 420);
+  label(160, 436, "근거 단위(evidence) 스키마");
+  // Part 4 출력은 오른쪽 위
+  node(OUT, 1060, 226, 160, 62, "var(--interaction)", null, 12);
+  flow(1040, 257, 1060, 257);
+})();
+
+// 오른쪽 상태·메모리 세로 바
+(function () {
+  const g = el("g", {});
+  node(STATE, 1060, 310, 160, 110, "var(--reasoning)", g, 12);
+  text(1068, 395, "모든 단계가 읽고 씀", "zone-sub", g);
+  text(1068, 410, "오케스트레이션(07)의", "zone-sub", g);
+  // 실행 경로 → 상태 양방향
+  el("path", { d: "M1040,365 L1060,365", class: "flow" });
+  el("path", { d: "M1060,380 L1040,380", class: "flow" });
+})();
+
+// 아래쪽 운영 존
+zone(300, 450, 740, 90, "운영 — 측정하고 선택한다", "모든 단계의 산출물은 13으로 평가, 14·99로 프레임워크·조합 결정", "var(--cross)");
+(function () {
+  const pad = 18, gap = 12, top = 480, w = (740 - pad * 2 - gap * 2) / 3;
+  OPS.forEach((n, k) => node(n, 300 + pad + k * (w + gap), top, w, 50, "var(--cross)", null, 22));
+})();
+
+// 하단 범례
+(function () {
+  const y = 580;
+  text(40, y, "읽는 순서: 05 자율성 결정 → 01 RAG 패턴 → 02·03·04 검색·생성 세부 → 11·10 판정·검증 레이어 삽입 → 08·09·12 상태·툴·안전장치 → 13 평가 → 14 프레임워크", "zone-sub");
+  text(40, y + 18, "트렌드 세 축이 걸치는 자리: 온톨로지 → 02 라우팅 enum · 04 접지 · 10 검증 기준   |   뉴로심볼릭 → 04 · 10 · 12   |   결정 모델(Jev · Decisions API) → 02 · 06 · 07 · 11 · 12", "zone-sub");
+  text(40, y + 36, "설계 원칙: ① 가장 단순한 형태에서 시작 ② 판정과 생성을 분리 ③ 근거는 입력에서 강제하고 출력에서 검증 ④ 상태는 명시적으로 ⑤ 메모리는 no-memory 베이스라인과 비교", "zone-sub");
+})();
+</script>
+</body>
+</html>

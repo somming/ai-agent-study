@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Part 2 · 데이터 파이프라인 아키텍처 — 근거 단위까지</title>
+<style>
+  /* 레이어 색상은 작성 가이드 7절과 동일하게 고정 (reference-architecture.html과 같은 변수) */
+  :root {
+    --bg: #fafaf8; --fg: #1d1d1b; --muted: #6b6b6b; --line: #d9d9d4; --card: #ffffff;
+    --knowledge: #2E7D6B; --reasoning: #3A5FA8; --interaction: #B5651D; --cross: #6B6B6B;
+    --trend: #8E44AD; --vector: #2E7D6B; --graph: #1F5F8B; --evidence: #B5651D;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #15161a; --fg: #ececea; --muted: #9a9a95; --line: #33353b; --card: #1e2026; --graph: #5AA0D8; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.5 -apple-system, "Pretendard", "Noto Sans KR", system-ui, sans-serif; }
+  header { padding: 20px 28px 8px; }
+  header h1 { margin: 0 0 4px; font-size: 20px; font-weight: 650; }
+  header p { margin: 0; color: var(--muted); }
+  .legend { display: flex; gap: 16px; flex-wrap: wrap; padding: 8px 28px 0; color: var(--muted); font-size: 12px; }
+  .legend span::before { content: ""; display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: -1px; background: var(--c); }
+  .legend span.dash::before { background: transparent; border: 2px dashed var(--c); width: 8px; height: 8px; }
+  .wrap { padding: 12px 28px 28px; }
+  svg { width: 100%; height: auto; display: block; }
+  .layer-bg { fill: var(--card); stroke: var(--line); }
+  .layer-label { font-size: 13px; font-weight: 700; letter-spacing: .02em; }
+  .layer-sub { font-size: 11px; fill: var(--muted); }
+  .node { cursor: pointer; }
+  .node rect { fill: var(--card); stroke-width: 1.5; rx: 6; }
+  .node text { font-size: 12px; fill: var(--fg); pointer-events: none; }
+  .node .idx { font-size: 10px; fill: var(--muted); }
+  .node:hover rect, .node:focus rect { filter: brightness(0.96); stroke-width: 2.5; }
+  .node:focus { outline: none; }
+  .node.trend rect { stroke-dasharray: 4 3; }
+  .node.star rect { stroke-width: 2.5; }
+  .flow { stroke: var(--muted); stroke-width: 1.5; fill: none; marker-end: url(#arrow); }
+  .flow.vector { stroke: var(--vector); }
+  .flow.graph { stroke: var(--graph); }
+  .flow.loop { stroke-dasharray: 5 4; }
+  .flow-label { font-size: 11px; fill: var(--muted); }
+  .flow-label.vector { fill: var(--vector); font-weight: 600; }
+  .flow-label.graph { fill: var(--graph); font-weight: 600; }
+  .contract { fill: var(--bg); stroke: var(--line); rx: 4; }
+  .contract-text { font-size: 11px; fill: var(--fg); }
+  #tip { position: fixed; pointer-events: none; background: var(--fg); color: var(--bg); padding: 6px 10px; border-radius: 6px; font-size: 12px; max-width: 340px; opacity: 0; transition: opacity .1s; z-index: 10; }
+  footer { padding: 0 28px 24px; color: var(--muted); font-size: 12px; }
+  footer a { color: inherit; }
+  table.mini { border-collapse: collapse; margin: 8px 28px 0; font-size: 12px; }
+  table.mini th, table.mini td { border: 1px solid var(--line); padding: 4px 8px; text-align: left; vertical-align: top; }
+  table.mini th { background: var(--card); }
+</style>
+</head>
+<body>
+<header>
+  <h1>Part 2 · 데이터 파이프라인 — 원천 데이터에서 근거 단위(evidence)까지</h1>
+  <p>노드를 클릭하면 해당 위키 페이지로 이동합니다. 벡터 경로와 그래프 경로가 갈라졌다가 <b>근거 단위 확정</b>에서 합류하고, 동기화·ACL이 수집으로 되돌아가는 증분 루프를 이룹니다.</p>
+</header>
+<div class="legend">
+  <span style="--c: var(--knowledge)">Knowledge 레이어 (Part 2)</span>
+  <span style="--c: var(--vector)">벡터 경로 — 비정형 서술</span>
+  <span style="--c: var(--graph)">그래프 경로 — 엔티티·관계·멀티홉</span>
+  <span style="--c: var(--evidence)">합류 — 근거 단위 ★</span>
+  <span class="dash" style="--c: var(--trend)">트렌드 세 축이 걸치는 단계 (온톨로지 · 뉴로심볼릭 · 결정 모델)</span>
+</div>
+<div class="wrap">
+<svg id="pipe" viewBox="0 0 1240 640" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Part 2 데이터 파이프라인 아키텍처">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#6b6b6b"/>
+    </marker>
+  </defs>
+</svg>
+</div>
+<table class="mini" aria-label="단계별 입력과 출력 요약">
+  <tr><th>단계</th><th>입력</th><th>출력 (다음 단계로 넘기는 것)</th></tr>
+  <tr><td>01 수집·파싱</td><td>원본 바이트, 소스 메타데이터, 변경 이벤트</td><td>정규화 문서 모델 (블록·페이지·좌표·신뢰도) + 원본 해시</td></tr>
+  <tr><td>02 청킹</td><td>블록 구조</td><td>parent/child 청크 + 원문 위치 매핑 + 제목 경로</td></tr>
+  <tr><td>03 메타데이터</td><td>모든 단계의 계보</td><td>출처·버전·권한·시점·계보 다섯 축 (필수 필드 게이트)</td></tr>
+  <tr><td>04 임베딩·인덱싱 / 05 KG 구축 → 06 온톨로지 정렬</td><td>청크 + 메타데이터</td><td>벡터·BM25 인덱스 / 근거 ID가 붙은 트리플 + 그래프 인덱스</td></tr>
+  <tr><td>08 근거 단위 확정 ★</td><td>두 경로의 파생물 + 메타데이터</td><td>citation 스키마 인스턴스 (등급·상충·ACL 플래그) → Part 3 검증기 · Part 4 렌더</td></tr>
+  <tr><td>07 동기화 · 10 ACL</td><td>변경 큐 (upsert / delete / acl)</td><td>모든 인덱스에 전파된 갱신·톰스톤·권한 → 수집으로 루프</td></tr>
+</table>
+<div id="tip"></div>
+<footer>
+  이 Part의 출력은 <b>근거 단위 스키마 + 인덱스(들) + 접근 정책</b>이다. 상세 선택 기준은 <a href="../../02-data-pipeline/99-decision-matrix.md">99 결정 매트릭스</a>, 전체 3-Layer 그림은 <a href="reference-architecture.html">레퍼런스 아키텍처</a>. 그래프 경로의 내부는 <a href="kg-construction-pipeline.html">KG 구축 파이프라인</a>.
+</footer>
+
+<script>
+// ---- 데이터: 노드 (링크는 assets/html/ 기준 상대 경로) ----
+const BASE = "../../02-data-pipeline/";
+const NW = 150, NH = 64;
+const NODES = {
+  ingest:   { x: 40,  y: 250, t: "소스 수집", i: "01", d: "커넥터(매니지드 vs 직접), CDC, 풀/푸시. 원본은 불변 저장소에 해시와 함께", href: "01-source-ingestion.md" },
+  parse:    { x: 210, y: 250, t: "문서 파싱", i: "01", d: "레이아웃 파서·OCR·VLM 캡션 → 블록·페이지·좌표가 보존된 정규화 문서 모델. 파싱 품질이 하류의 상한", href: "01-source-ingestion.md" },
+  chunk:    { x: 380, y: 250, t: "청킹", i: "02", d: "문서 구조 기반 + parent-child. 맥락 보강은 late chunking / contextual retrieval 중 선택", href: "02-chunking-strategies.md" },
+  meta:     { x: 550, y: 250, t: "메타데이터·출처", i: "03", d: "출처·버전·권한·시점·계보 다섯 축. W3C PROV 어휘. 필수 필드 누락 시 인덱싱 거부", href: "03-metadata-provenance.md" },
+  embed:    { x: 740, y: 120, t: "임베딩·인덱싱", i: "04", d: "벡터 경로. hybrid(BM25 + dense + RRF) 기본값, 벡터DB 유형 선택, 양자화", href: "04-embedding-indexing.md", path: "vector" },
+  kg:       { x: 740, y: 380, t: "지식그래프 구축", i: "05", d: "그래프 경로. LLM/규칙/하이브리드 추출 → 엔티티 해소 → 적재. GraphRAG / LightRAG / HippoRAG 2 인덱싱 비교", href: "05-knowledge-graph-construction.md", path: "graph", trend: true },
+  onto:     { x: 920, y: 380, t: "온톨로지 정렬", i: "06", d: "추출 결과를 온톨로지 클래스·관계에 정렬, SHACL 검증. 정의는 OWL/SHACL, 운영은 LPG", href: "06-ontology-driven-modeling.md", path: "graph", trend: true },
+  evidence: { x: 1050, y: 250, t: "근거 단위 확정 ★", i: "08", d: "합류점. 청크·문장·트리플·레코드를 하나의 citation 스키마로. 신뢰도 등급, 상충 근거, 검증기·UI 계약", href: "08-grounding-data-design.md", star: true },
+  sync:     { x: 550, y: 500, t: "동기화 · ACL", i: "07 · 10", d: "증분 갱신, 삭제·만료 전파, 중복 제거, 재임베딩 / 인덱스 분리·사전 필터·PII 마스킹·보존 정책. 변경 큐는 하나", href: "07-freshness-and-sync.md", trend: true },
+};
+const AI_BAR = { x: 40, y: 586, w: 1160, h: 40, t: "파이프라인 내부의 AI — 분류·정제·라벨링·추출·중복 판정·품질 판정에 규칙 → 결정 모델(Jev / Decisions API)·소형 모델 → LLM 순으로 배정", i: "09", d: "모든 단계의 닫힌 판정 지점에 걸친다. 결정 모델 수치는 [벤더], 한국어 실측 필수", href: "09-ai-inside-the-pipeline.md" };
+
+// ---- 렌더 유틸 ----
+const svg = document.getElementById("pipe");
+const NS = "http://www.w3.org/2000/svg";
+const tip = document.getElementById("tip");
+function el(name, attrs, parent) {
+  const e = document.createElementNS(NS, name);
+  for (const k in attrs) e.setAttribute(k, attrs[k]);
+  (parent || svg).appendChild(e);
+  return e;
+}
+function text(x, y, str, cls, parent, anchor) {
+  const t = el("text", { x, y, class: cls || "", "text-anchor": anchor || "start" }, parent);
+  t.textContent = str; return t;
+}
+function bindLink(g, n) {
+  g.setAttribute("tabindex", "0"); g.setAttribute("role", "link");
+  const go = () => { window.location.href = BASE + n.href; };
+  g.addEventListener("click", go);
+  g.addEventListener("keydown", e => { if (e.key === "Enter") go(); });
+  g.addEventListener("mousemove", e => { tip.textContent = n.d + "  →  " + n.href; tip.style.left = (e.clientX + 12) + "px"; tip.style.top = (e.clientY + 12) + "px"; tip.style.opacity = 1; });
+  g.addEventListener("mouseleave", () => tip.style.opacity = 0);
+}
+function node(n) {
+  const cls = "node" + (n.trend ? " trend" : "") + (n.star ? " star" : "");
+  const g = el("g", { class: cls });
+  const stroke = n.star ? "var(--evidence)" : n.trend ? "var(--trend)" : n.path === "graph" ? "var(--graph)" : "var(--knowledge)";
+  el("rect", { x: n.x, y: n.y, width: NW, height: NH, stroke }, g);
+  text(n.x + 8, n.y + 14, n.i, "idx", g);
+  text(n.x + 8, n.y + 38, n.t, "", g);
+  bindLink(g, n);
+  return g;
+}
+// 직교(엘보) 연결선
+function flow(x1, y1, x2, y2, cls, mid) {
+  const mx = mid !== undefined ? mid : (x1 + x2) / 2;
+  const d = y1 === y2 ? `M${x1},${y1} L${x2},${y2}` : `M${x1},${y1} L${mx},${y1} L${mx},${y2} L${x2},${y2}`;
+  return el("path", { d, class: "flow " + (cls || "") });
+}
+function label(x, y, str, cls) {
+  const g = el("g", {});
+  const tw = str.length * 6.6 + 16;
+  el("rect", { x: x - tw / 2, y: y - 11, width: tw, height: 20, class: "contract" }, g);
+  text(x, y + 3, str, "contract-text " + (cls || ""), g, "middle");
+}
+
+// ---- 레이어 배경 ----
+(function () {
+  const g = el("g", { id: "layer" });
+  el("rect", { x: 20, y: 40, width: 1200, height: 530, class: "layer-bg", rx: 10 }, g);
+  el("rect", { x: 20, y: 40, width: 6, height: 530, fill: "var(--knowledge)", rx: 3 }, g);
+  text(38, 62, "Knowledge", "layer-label", g).setAttribute("fill", "var(--knowledge)");
+  text(38, 80, "Part 2 · AI 기반 데이터 파이프라인 및 근거 데이터 설계 — 입력: 원천 데이터 / 출력: 근거 단위 스키마 + 인덱스 + 접근 정책", "layer-sub", g);
+})();
+
+// ---- 노드 ----
+Object.values(NODES).forEach(node);
+
+// 09 가로 바 (트렌드 점선)
+(function () {
+  const g = el("g", { class: "node trend" });
+  el("rect", { x: AI_BAR.x, y: AI_BAR.y, width: AI_BAR.w, height: AI_BAR.h, stroke: "var(--trend)" }, g);
+  text(AI_BAR.x + 8, AI_BAR.y + 14, AI_BAR.i, "idx", g);
+  text(AI_BAR.x + 8, AI_BAR.y + 30, AI_BAR.t, "", g);
+  bindLink(g, AI_BAR);
+})();
+
+// ---- 흐름 ----
+const R = n => ({ l: n.x, r: n.x + NW, cy: n.y + NH / 2, cx: n.x + NW / 2, t: n.y, b: n.y + NH });
+const N = NODES;
+// 메인 직선
+flow(R(N.ingest).r, R(N.ingest).cy, R(N.parse).l, R(N.parse).cy);
+flow(R(N.parse).r, R(N.parse).cy, R(N.chunk).l, R(N.chunk).cy);
+flow(R(N.chunk).r, R(N.chunk).cy, R(N.meta).l, R(N.meta).cy);
+// 분기: 메타데이터 → 임베딩(위) / KG(아래)
+flow(R(N.meta).r, R(N.meta).cy, R(N.embed).l, R(N.embed).cy, "vector", 720);
+flow(R(N.meta).r, R(N.meta).cy, R(N.kg).l, R(N.kg).cy, "graph", 720);
+label(735, 200, "벡터 경로 — 비정형 서술·사실 조회", "vector");
+label(735, 330, "그래프 경로 — 멀티홉·동일성·설명 요구 확인 후", "graph");
+// 그래프 경로 내부
+flow(R(N.kg).r, R(N.kg).cy, R(N.onto).l, R(N.onto).cy, "graph");
+// 합류: 임베딩 → 근거 (왼쪽 위) / 온톨로지 정렬 → 근거 (왼쪽 아래). 두 화살표가 한 점에 겹치지 않게 ±12
+el("path", { d: `M${R(N.embed).r},${R(N.embed).cy} L1010,${R(N.embed).cy} L1010,${R(N.evidence).cy - 12} L${R(N.evidence).l},${R(N.evidence).cy - 12}`, class: "flow vector" });
+el("path", { d: `M${R(N.onto).cx},${R(N.onto).t} L${R(N.onto).cx},${R(N.evidence).cy + 12} L${R(N.evidence).l},${R(N.evidence).cy + 12}`, class: "flow graph" });
+// 합류 라벨 (근거 단위 노드 아래, viewBox 안쪽)
+label(1125, 345, "합류: 온톨로지 어휘로 citation에", "");
+// 근거 단위 → 다음 Part (레이어 밖으로)
+el("path", { d: `M${R(N.evidence).cx},${R(N.evidence).t} L${R(N.evidence).cx},46`, class: "flow" });
+label(R(N.evidence).cx - 150, 100, "→ Part 3 검증기 · Part 4 렌더 (citation 계약)", "");
+// 동기화·ACL: 근거 단위에서 내려와 수집으로 되돌아가는 증분 루프
+el("path", { d: `M${R(N.evidence).cx},${R(N.evidence).b} L${R(N.evidence).cx},${R(N.sync).cy} L${R(N.sync).r},${R(N.sync).cy}`, class: "flow loop" });
+el("path", { d: `M${R(N.sync).l},${R(N.sync).cy} L${R(N.ingest).cx},${R(N.sync).cy} L${R(N.ingest).cx},${R(N.ingest).b}`, class: "flow loop" });
+label(860, 532, "증분 루프: 변경 큐 하나가 벡터·그래프·메타데이터를 모두 갱신 · 톰스톤 · ACL 전파", "");
+label(300, 532, "소스 변경·삭제·권한 회수 → 문서 단위 멱등 재처리", "");
+// 메타데이터 → 동기화 (버전·계보가 갱신 범위를 결정)
+el("path", { d: `M${R(N.meta).cx},${R(N.meta).b} L${R(N.meta).cx},${R(N.sync).t}`, class: "flow" });
+label(R(N.meta).cx - 110, 440, "버전·계보로 재처리 범위 식별", "");
+</script>
+</body>
+</html>

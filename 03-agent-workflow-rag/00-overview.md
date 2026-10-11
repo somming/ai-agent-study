@@ -10,7 +10,7 @@ updated: 2026-10-11
 
 # Part 3. Agent 워크플로우 설계 및 LLM/RAG 파이프라인 아키텍처
 
-> **시각화**: `assets/html/agent-workflow-architecture.html` (예정)
+> **시각화**: [`assets/html/agent-workflow-architecture.html`](../assets/html/agent-workflow-architecture.html)
 > Reasoning / Action Layer. 에이전트가 **어떻게 추론하고 행동하는지**를 설계한다. 이 Part의 핵심 결정은 두 가지다. ① 어디까지를 결정론적 워크플로우로 고정하고 어디부터 모델에 맡길 것인가. ② 어떤 판단을 생성 모델(System 2)이 아닌 결정 모델·규칙(System 1)에 맡길 것인가.
 
 ## 이 Part의 역할

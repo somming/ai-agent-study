@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RAG 아키텍처 패턴 진화</title>
+<style>
+  :root {
+    --bg: #fafaf8; --fg: #1d1d1b; --muted: #6b6b6b; --line: #d9d9d4; --card: #ffffff;
+    --knowledge: #2E7D6B; --reasoning: #3A5FA8; --interaction: #B5651D; --cross: #6B6B6B;
+    --trend: #8E44AD; --new: #3A5FA8;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #15161a; --fg: #ececea; --muted: #9a9a95; --line: #33353b; --card: #1e2026; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.5 -apple-system, "Pretendard", "Noto Sans KR", system-ui, sans-serif; }
+  header { padding: 20px 28px 8px; }
+  header h1 { margin: 0 0 4px; font-size: 20px; font-weight: 650; }
+  header p { margin: 0; color: var(--muted); }
+  .legend { display: flex; gap: 16px; flex-wrap: wrap; padding: 8px 28px 0; color: var(--muted); font-size: 12px; }
+  .legend span::before { content: ""; display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: -1px; background: var(--c); }
+  .legend span.new::before { background: var(--card); border: 2px solid var(--new); width: 8px; height: 8px; }
+  .legend span.base::before { background: var(--card); border: 1.5px solid var(--line); width: 8px; height: 8px; }
+  .wrap { padding: 12px 28px 28px; }
+  svg { width: 100%; height: auto; display: block; }
+  .col { fill: var(--card); stroke: var(--line); rx: 10; }
+  .col-label { font-size: 14px; font-weight: 700; }
+  .col-sub { font-size: 11px; fill: var(--muted); }
+  .comp { cursor: pointer; }
+  .comp rect { fill: var(--card); stroke: var(--line); stroke-width: 1.5; rx: 5; }
+  .comp.new rect { stroke: var(--new); stroke-width: 2; }
+  .comp.agent rect { stroke: var(--trend); stroke-width: 2; stroke-dasharray: 4 3; }
+  .comp text { font-size: 12px; fill: var(--fg); pointer-events: none; }
+  .comp:hover rect, .comp:focus rect { filter: brightness(0.95); stroke-width: 2.5; }
+  .comp:focus { outline: none; }
+  .arrow { stroke: var(--muted); stroke-width: 1.4; fill: none; marker-end: url(#arr); }
+  .loop { stroke: var(--trend); stroke-width: 1.4; fill: none; marker-end: url(#arrT); stroke-dasharray: 3 3; }
+  .evo { stroke: var(--reasoning); stroke-width: 2; fill: none; marker-end: url(#arrB); }
+  .note { font-size: 11px; fill: var(--muted); }
+  .verify { font-size: 10px; fill: var(--muted); font-family: ui-monospace, Menlo, monospace; }
+  #tip { position: fixed; pointer-events: none; background: var(--fg); color: var(--bg); padding: 6px 10px; border-radius: 6px; font-size: 12px; max-width: 340px; opacity: 0; transition: opacity .1s; z-index: 10; }
+  footer { padding: 0 28px 24px; color: var(--muted); font-size: 12px; }
+  footer a { color: inherit; }
+</style>
+</head>
+<body>
+<header>
+  <h1>RAG 아키텍처 패턴 진화 — Naive → Advanced → Modular → Agentic, 그리고 GraphRAG 분기</h1>
+  <p>각 열은 하나의 패턴, 열 안의 상자는 구성 요소입니다. 파란 테두리는 <b>이전 단계에 없던 새 구성 요소</b>. 상자를 클릭하면 해당 요소를 설명하는 위키 페이지로 이동합니다.</p>
+</header>
+<div class="legend">
+  <span class="base">이전 단계에서 이어받은 요소</span>
+  <span class="new">이 단계에서 새로 추가된 요소</span>
+  <span style="--c: var(--trend)">에이전트 판단이 개입하는 요소 (점선)</span>
+  <span style="--c: var(--knowledge)">GraphRAG 계열 — Knowledge 레이어의 그래프를 검색 구조로</span>
+</div>
+<div class="wrap">
+<svg id="evo" viewBox="0 0 1240 820" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="RAG 패턴 진화도">
+  <defs>
+    <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#6b6b6b"/></marker>
+    <marker id="arrT" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#8E44AD"/></marker>
+    <marker id="arrB" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#3A5FA8"/></marker>
+  </defs>
+</svg>
+</div>
+<div id="tip"></div>
+<footer>
+  본문: <a href="../../03-agent-workflow-rag/01-rag-architecture-patterns.md">01 RAG 아키텍처 패턴</a>. "어떤 단일 아키텍처도 모든 시나리오에서 이기지 않는다" <code>[2차]</code>. GraphRAG 계열의 우위는 포맷 효과 통제 후 최난도 멀티홉에서만 뚜렷 (arXiv 2607.11683 <code>[검증]</code>).
+</footer>
+
+<script>
+const BASE = "../../";
+const P3 = "03-agent-workflow-rag/", P2 = "02-data-pipeline/";
+
+// 각 패턴의 구성 요소. new: 이 단계에서 새로 추가, agent: 에이전트 판단 개입
+const PATTERNS = [
+  { name: "Naive RAG", sub: "검색 → 생성 직결", cost: "호출 1회 · 검색 1회", fail: "어휘 불일치 · 무관 청크 혼입 · 다중 문서 종합 실패",
+    comps: [
+      { t: "질의 그대로", d: "변환 없이 사용자 질의를 임베딩", href: P3 + "02-query-understanding.md" },
+      { t: "임베딩 검색 (dense)", d: "벡터 유사도 top-k. 고유명사·숫자·약어에 약함", href: P3 + "03-retrieval-reranking.md" },
+      { t: "top-k 고정", d: "k는 상수. 단순 질의엔 노이즈, 종합 질의엔 누락", href: P3 + "03-retrieval-reranking.md" },
+      { t: "프롬프트에 붙여 생성", d: "citation 지시만. 확률적 준수", href: P3 + "04-generation-grounding.md" },
+    ]},
+  { name: "Advanced RAG", sub: "검색 앞뒤에 모듈", cost: "호출 2~4회 · 검색 1~N회", fail: "모듈 수만큼 지연 누적 · 모듈 간 상호작용 디버깅",
+    comps: [
+      { t: "쿼리 재작성 · 분해 · HyDE", d: "어휘 불일치·복합 질의 대응. 한국어 정규화 선행", href: P3 + "02-query-understanding.md", new: true },
+      { t: "hybrid (BM25 + dense) + RRF", d: "단독보다 우수 [2차]. 한국어는 형태소 토크나이저", href: P3 + "03-retrieval-reranking.md", new: true },
+      { t: "cross-encoder 리랭킹", d: "난이도 높은 셋에서 추가 이득 [2차]", href: P3 + "03-retrieval-reranking.md", new: true },
+      { t: "컨텍스트 압축", d: "추출형 우선. 요약형은 원문 참조 유지", href: P3 + "03-retrieval-reranking.md", new: true },
+      { t: "구조화 출력 citation + 검증", d: "스키마 강제 → 규칙·NLI 검증 → abstain", href: P3 + "04-generation-grounding.md", new: true },
+    ]},
+  { name: "Modular RAG", sub: "교체 가능한 모듈 + 라우터", cost: "경로별 상이 · 라우터 1회 추가", fail: "구성 조합 폭발 · 라우터 오판이 전체 품질 좌우",
+    comps: [
+      { t: "라우터 (경로·소스 선택)", d: "결정 모델 · 분류기 · 규칙. 질의 복잡도별 경로 배정", href: P3 + "02-query-understanding.md", new: true },
+      { t: "모듈 인터페이스 표준화", d: "재작성·검색·리랭킹·압축이 교체 가능. 출력 계약 통일", href: P3 + "01-rag-architecture-patterns.md", new: true },
+      { t: "Advanced 모듈 (이어받음)", d: "경로마다 다른 모듈 조합", href: P3 + "03-retrieval-reranking.md" },
+      { t: "메타데이터 필터 · ACL", d: "pre-filter로 모든 검색기에 동일 적용", href: P2 + "10-access-control-governance.md", new: true },
+      { t: "융합 · 종합", d: "멀티 쿼리·다중 소스 결과를 RRF로 융합", href: P3 + "03-retrieval-reranking.md", new: true },
+    ]},
+  { name: "Agentic RAG", sub: "검색이 루프 '안'으로", cost: "호출 수 가변 · 상한 필수", fail: "비결정적 비용 · 무한 루프 · 디버깅 난이도",
+    comps: [
+      { t: "검색할지 · 무엇을 검색할지", d: "에이전트가 루프 안에서 판정. 결정 모델로 대체 가능", href: P3 + "06-agent-design-patterns.md", new: true, agent: true },
+      { t: "검색 = 툴", d: "벡터·BM25·그래프·DB가 각각 툴. MCP로 노출 가능", href: P3 + "09-tools-and-mcp.md", new: true },
+      { t: "Modular 모듈 (이어받음)", d: "라우터·필터·융합은 그대로", href: P3 + "01-rag-architecture-patterns.md" },
+      { t: "충분한가? → 재검색", d: "자기 평가 후 질의 수정·재검색. 상한 도달 시 폴백", href: P3 + "06-agent-design-patterns.md", new: true, agent: true },
+      { t: "검증 실패 → 재검색", d: "04의 불합격이 03의 입력으로 되돌아옴", href: P3 + "04-generation-grounding.md", new: true, agent: true },
+    ]},
+];
+
+// GraphRAG 계열 (하단 분기)
+const GRAPH = [
+  { t: "Microsoft GraphRAG", d: "LLM 추출 + 커뮤니티 탐지 + 커뮤니티 요약. 로컬/글로벌 검색. 인덱싱 비용 과다, 'brittle and cost-prohibitive' 비판 [벤더]", v: "[벤더]", href: P2 + "05-knowledge-graph-construction.md" },
+  { t: "LightRAG", d: "엔티티-관계 그래프, 저수준/고수준 이중 검색, 증분 업데이트 지원. 토큰 절감 수치는 2차 요약 [2차]", v: "[2차]", href: P2 + "05-knowledge-graph-construction.md" },
+  { t: "HippoRAG 2", d: "KG + Personalized PageRank 연상 검색. 재분석(2607.11683): 포맷 통제 후 최난도 멀티홉 MuSiQue에서만 뚜렷한 우위 54.4 vs 40.1 [검증]", v: "[검증]", href: P2 + "05-knowledge-graph-construction.md" },
+];
+const SIDE = [
+  { t: "롱컨텍스트 직접 주입", d: "코퍼스가 윈도우에 들어가면 검색 생략. 중간 청크 누락(Lost in the Middle·RULER) [검증]. RAG와 보완 관계 [2차]", href: P3 + "01-rag-architecture-patterns.md" },
+  { t: "하이브리드 (RAG 선별 + 문서 단위 롱컨텍스트)", d: "RAG로 문서를 좁힌 뒤 청크가 아닌 문서 단위로 주입. 실무 절충", href: P3 + "01-rag-architecture-patterns.md" },
+];
+
+const svg = document.getElementById("evo");
+const NS = "http://www.w3.org/2000/svg";
+const tip = document.getElementById("tip");
+function el(name, attrs, parent) { const e = document.createElementNS(NS, name); for (const k in attrs) e.setAttribute(k, attrs[k]); (parent || svg).appendChild(e); return e; }
+function text(x, y, str, cls, parent, anchor) { const t = el("text", { x, y, class: cls || "", "text-anchor": anchor || "start" }, parent); t.textContent = str; return t; }
+function wrapText(x, y, str, maxChars, g) {
+  const words = str.split(" "); const lines = []; let cur = "";
+  for (const w of words) { if ((cur + " " + w).trim().length > maxChars && cur) { lines.push(cur); cur = w; } else { cur = (cur + " " + w).trim(); } }
+  if (cur) lines.push(cur);
+  lines.forEach((ln, k) => text(x, y + k * 14, ln, "", g));
+  return lines.length;
+}
+function comp(c, x, y, w, h, parent, cls) {
+  const g = el("g", { class: "comp" + (c.new ? " new" : "") + (c.agent ? " agent" : "") + (cls ? " " + cls : ""), tabindex: "0", role: "link" }, parent);
+  el("rect", { x, y, width: w, height: h }, g);
+  const n = wrapText(x + 8, y + 17, c.t, Math.floor(w / 11.5), g);
+  const go = () => { window.location.href = BASE + c.href; };
+  g.addEventListener("click", go);
+  g.addEventListener("keydown", e => { if (e.key === "Enter") go(); });
+  g.addEventListener("mousemove", e => { tip.textContent = c.d + "  →  " + c.href; tip.style.left = (e.clientX + 12) + "px"; tip.style.top = (e.clientY + 12) + "px"; tip.style.opacity = 1; });
+  g.addEventListener("mouseleave", () => tip.style.opacity = 0);
+  return g;
+}
+
+// ---- 4개 열 ----
+const COLX = 40, COLW = 272, GAP = 24, COLY = 20, COLH = 470;
+PATTERNS.forEach((p, i) => {
+  const x = COLX + i * (COLW + GAP);
+  const g = el("g", {});
+  el("rect", { x, y: COLY, width: COLW, height: COLH, class: "col" }, g);
+  el("rect", { x, y: COLY, width: COLW, height: 6, fill: "var(--reasoning)", rx: 3 }, g);
+  text(x + 14, COLY + 30, p.name, "col-label", g).setAttribute("fill", "var(--reasoning)");
+  text(x + 14, COLY + 48, p.sub, "col-sub", g);
+  // 구성 요소 세로 배치
+  const cw = COLW - 28, ch = 44, top = COLY + 64, step = 56;
+  p.comps.forEach((c, k) => {
+    comp(c, x + 14, top + k * step, cw, ch, g);
+    if (k < p.comps.length - 1) el("path", { d: `M${x + 14 + cw / 2},${top + k * step + ch} L${x + 14 + cw / 2},${top + (k + 1) * step}`, class: "arrow" });
+  });
+  // Agentic 루프 화살표 (마지막 → 첫 요소)
+  if (p.name === "Agentic RAG") {
+    const lx = x + 14 + cw + 6, y1 = top + (p.comps.length - 1) * step + ch / 2, y0 = top + ch / 2;
+    el("path", { d: `M${x + 14 + cw},${y1} L${lx},${y1} L${lx},${y0} L${x + 14 + cw + 1},${y0}`, class: "loop" });
+  }
+  // 하단: 비용·실패
+  text(x + 14, COLY + COLH - 44, "비용: " + p.cost, "note", g);
+  const f = "실패: " + p.fail; const lines = [];
+  let cur = ""; for (const w of f.split(" ")) { if ((cur + " " + w).trim().length > 34 && cur) { lines.push(cur); cur = w; } else cur = (cur + " " + w).trim(); } if (cur) lines.push(cur);
+  lines.slice(0, 2).forEach((ln, k) => text(x + 14, COLY + COLH - 26 + k * 14, ln, "note", g));
+  // 진화 화살표
+  if (i < PATTERNS.length - 1) el("path", { d: `M${x + COLW},${COLY + 36} L${x + COLW + GAP},${COLY + 36}`, class: "evo" });
+});
+
+// ---- GraphRAG 분기 (하단) ----
+(function () {
+  const y = COLY + COLH + 50, h = 230, x = COLX, w = 3 * COLW + 2 * GAP;
+  const g = el("g", {});
+  el("rect", { x, y, width: w, height: h, class: "col" }, g);
+  el("rect", { x, y, width: 6, height: h, fill: "var(--knowledge)", rx: 3 }, g);
+  text(x + 18, y + 26, "GraphRAG 계열 — 청크 유사도가 아닌 엔티티·관계 탐색으로 멀티홉 처리", "col-label", g).setAttribute("fill", "var(--knowledge)");
+  text(x + 18, y + 44, "Advanced 이후 어느 단계에서든 '멀티홉 경로'로 분기해 결합. 그래프 결과는 원문 청크로 환원해 같은 리랭킹·citation 경로를 탄다", "col-sub", g);
+  const cw = (w - 36 - 2 * 16) / 3, ch = 60, top = y + 60;
+  GRAPH.forEach((c, k) => {
+    const cx = x + 18 + k * (cw + 16);
+    comp(c, cx, top, cw, ch, g);
+    text(cx + cw - 8, top + ch - 8, c.v, "verify", g, "end");
+  });
+  // 공통 하단 노트
+  text(x + 18, y + 150, "공통 전제: Knowledge 레이어의 KG 구축 (Part 2/05) · 온톨로지로 엔티티·관계 타입 제약 (Part 2/06)", "note", g);
+  text(x + 18, y + 168, "채택 기준: 질의 복잡도 측정 → 최난도 멀티홉 비율이 유의미할 때만. 단순·중간 난도에서는 벡터 검색을 뚜렷이 이기지 못함 [검증]", "note", g);
+  text(x + 18, y + 186, "인덱싱 비용 × 코퍼스 변경 빈도 = 월 비용. 자주 바뀌면 증분 업데이트가 되는 LightRAG", "note", g);
+  text(x + 18, y + 210, "→ 01 RAG 아키텍처 패턴 · Part 2/05 지식그래프 구축 · Part 6 GraphRAG의 진화", "note", g);
+  // 분기 화살표: Advanced·Modular·Agentic 열 하단 → GraphRAG 존
+  [1, 2, 3].forEach(i => { const cx = COLX + i * (COLW + GAP) + COLW / 2; el("path", { d: `M${cx},${COLY + COLH} L${Math.min(cx, x + w - 10)},${y}`, class: "arrow" }); });
+  text(COLX + 1.5 * (COLW + GAP) + COLW / 2, COLY + COLH + 32, "멀티홉 경로 → 그래프 탐색 결합", "note", null, "middle");
+})();
+
+// ---- 롱컨텍스트 · 하이브리드 (우하단) ----
+(function () {
+  const x = COLX + 3 * (COLW + GAP), y = COLY + COLH + 50, w = COLW, h = 230;
+  const g = el("g", {});
+  el("rect", { x, y, width: w, height: h, class: "col" }, g);
+  el("rect", { x, y, width: 6, height: h, fill: "var(--cross)", rx: 3 }, g);
+  text(x + 18, y + 26, "검색 없이 / 검색 줄여서", "col-label", g).setAttribute("fill", "var(--cross)");
+  text(x + 18, y + 44, "RAG의 대체가 아니라 보완 [2차]", "col-sub", g);
+  const cw = w - 36, ch = 56;
+  SIDE.forEach((c, k) => comp(c, x + 18, y + 60 + k * 68, cw, ch, g));
+  text(x + 18, y + 206, "코퍼스 소형 · 요청량 적음 → 직접 주입", "note", g);
+  text(x + 18, y + 222, "관련 문서 소수 · 맥락 보존 중요 → 하이브리드", "note", g);
+})();
+
+// 하단 질의 복잡도별 배정표
+(function () {
+  const y = COLY + COLH + 50 + 230 + 28;
+  text(COLX, y, "질의 복잡도별 기본 배정:  단순 사실 → Advanced   |   다중 문서 종합 → Advanced + 분해·멀티 쿼리 (경로 2개 이상이면 Modular)   |   멀티홉 → 그래프 탐색 결합 또는 Agentic   |   전역 요약 → GraphRAG 글로벌 또는 하이브리드 롱컨텍스트", "note");
+  text(COLX, y + 18, "판단이 어려우면 → Naive로 기준선을 재고 Advanced(hybrid + 리랭킹)를 기본값으로. 그 이상은 실패 질의 유형이 측정으로 확인된 뒤에.", "note");
+})();
+</script>
+</body>
+</html>

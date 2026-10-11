@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>에이전트 설계 패턴 — 6개 루프 구조 비교</title>
+<style>
+  :root {
+    --bg: #fafaf8; --fg: #1d1d1b; --muted: #6b6b6b; --line: #d9d9d4; --card: #ffffff;
+    --knowledge: #2E7D6B; --reasoning: #3A5FA8; --interaction: #B5651D; --cross: #6B6B6B;
+    --trend: #8E44AD;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #15161a; --fg: #ececea; --muted: #9a9a95; --line: #33353b; --card: #1e2026; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.5 -apple-system, "Pretendard", "Noto Sans KR", system-ui, sans-serif; }
+  header { padding: 20px 28px 8px; }
+  header h1 { margin: 0 0 4px; font-size: 20px; font-weight: 650; }
+  header p { margin: 0; color: var(--muted); }
+  .legend { display: flex; gap: 16px; flex-wrap: wrap; padding: 8px 28px 0; color: var(--muted); font-size: 12px; }
+  .legend span::before { content: ""; display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: -1px; background: var(--c); }
+  .legend span.dash::before { background: transparent; border: 2px dashed var(--trend); width: 8px; height: 8px; }
+  .wrap { padding: 12px 28px 28px; }
+  svg { width: 100%; height: auto; display: block; }
+  .panel { fill: var(--card); stroke: var(--line); rx: 10; cursor: pointer; }
+  .panel-g:hover .panel, .panel-g:focus .panel { stroke: var(--reasoning); stroke-width: 2; }
+  .panel-g:focus { outline: none; }
+  .p-title { font-size: 15px; font-weight: 700; fill: var(--reasoning); }
+  .p-sub { font-size: 11px; fill: var(--muted); }
+  .step rect, .step circle { fill: var(--card); stroke: var(--reasoning); stroke-width: 1.5; rx: 5; }
+  .step.llm rect { fill: var(--reasoning); fill-opacity: .12; }
+  .step.judge rect { stroke: var(--trend); stroke-dasharray: 4 3; }
+  .step.tool rect { stroke: var(--knowledge); }
+  .step.code rect { stroke: var(--cross); }
+  .step text { font-size: 11px; fill: var(--fg); pointer-events: none; }
+  .e { stroke: var(--muted); stroke-width: 1.4; fill: none; marker-end: url(#a); }
+  .e.loop { stroke: var(--trend); stroke-dasharray: 3 3; marker-end: url(#aT); }
+  .meta { font-size: 11px; fill: var(--muted); }
+  .meta b { fill: var(--fg); font-weight: 600; }
+  #tip { position: fixed; pointer-events: none; background: var(--fg); color: var(--bg); padding: 6px 10px; border-radius: 6px; font-size: 12px; max-width: 360px; opacity: 0; transition: opacity .1s; z-index: 10; }
+  footer { padding: 0 28px 24px; color: var(--muted); font-size: 12px; }
+  footer a { color: inherit; }
+</style>
+</head>
+<body>
+<header>
+  <h1>에이전트 설계 패턴 — 6개 루프 구조 나란히 비교</h1>
+  <p>각 패널은 하나의 패턴. 상자 위에 마우스를 올리면 그 스텝의 설명이, 패널을 클릭하면 본문 페이지로 이동합니다. 점선 상자는 <b>선택지가 닫힌 판정</b>으로, 결정 모델·규칙이 맡을 수 있는 자리입니다.</p>
+</header>
+<div class="legend">
+  <span style="--c: var(--reasoning)">LLM 생성 스텝 (색 채움)</span>
+  <span class="dash">판정 스텝 — 결정 모델 · 규칙 · LLM 중 배정</span>
+  <span style="--c: var(--knowledge)">툴 · 검색 · 외부 실행</span>
+  <span style="--c: var(--cross)">코드가 정하는 스텝</span>
+  <span style="--c: var(--trend)">루프 되돌림 (상한 필수)</span>
+</div>
+<div class="wrap">
+<svg id="pat" viewBox="0 0 1240 1050" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="에이전트 설계 패턴 6종 루프 비교">
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#6b6b6b"/></marker>
+    <marker id="aT" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#8E44AD"/></marker>
+  </defs>
+</svg>
+</div>
+<div id="tip"></div>
+<footer>
+  본문: <a href="../../03-agent-workflow-rag/06-agent-design-patterns.md">06 에이전트 설계 패턴</a> · 자율성 수준 결정은 <a href="../../03-agent-workflow-rag/05-workflow-vs-agent.md">05 워크플로우 vs 에이전트</a> · 판정 자리의 수단 배정은 <a href="../../03-agent-workflow-rag/11-decision-layer.md">11 결정 레이어</a>. 패턴 조합은 2단까지.
+</footer>
+
+<script>
+const BASE = "../../";
+const P3 = "03-agent-workflow-rag/";
+
+// 스텝 타입: llm(생성) / judge(판정) / tool(실행) / code(코드)
+// 좌표는 패널 내부 상대 좌표 (패널 폭 380, 높이 400 기준)
+const PATTERNS = [
+  { name: "Tool-use", sub: "모델이 함수·인자를 고르고 한 번 실행", href: P3 + "06-agent-design-patterns.md",
+    cost: "LLM 호출 1~2 (선택 + 답변)", fit: "툴 한 번 호출로 끝나는 과업", bad: "결과를 보고 다시 호출해야 하는 과업", fail: "잘못된 인자 · 불필요한 호출",
+    steps: [
+      { id: "q", t: "질의", x: 20, y: 150, w: 60, h: 36, k: "code", d: "사용자 입력 또는 상위 워크플로우의 호출" },
+      { id: "sel", t: "툴·인자 선택", x: 110, y: 150, w: 90, h: 36, k: "llm", d: "함수 호출 API. 어느 툴, 어떤 인자. 인자는 스키마 검증" },
+      { id: "gate", t: "게이트", x: 230, y: 150, w: 56, h: 36, k: "judge", d: "실행 허가? 규칙이 최종 결정 (12)" },
+      { id: "run", t: "실행", x: 316, y: 150, w: 50, h: 36, k: "tool", d: "툴 / MCP 서버 (09)" },
+      { id: "ans", t: "결과로 답변", x: 150, y: 230, w: 90, h: 36, k: "llm", d: "툴 결과를 근거로 생성 (04)" },
+    ],
+    edges: [["q","sel"],["sel","gate"],["gate","run"],["run","ans","down"]] },
+  { name: "ReAct", sub: "생각 → 행동 → 관찰 반복, 종료 판단", href: P3 + "06-agent-design-patterns.md",
+    cost: "스텝 수에 비례 (가변) — 상한 필수", fit: "탐색적 과업, 매 스텝 결과가 다음을 결정, ≤10스텝", bad: "긴 과업(컨텍스트 폭증), 지연 SLA, 계획 가능한 과업", fail: "목표 이탈 · 반복 행동 · 종료 불안정",
+    steps: [
+      { id: "st", t: "상태 (목표 + 요약 히스토리)", x: 20, y: 60, w: 170, h: 36, k: "code", d: "전체 히스토리가 아니라 요약 + 최근 관찰 (08)" },
+      { id: "think", t: "생각", x: 60, y: 130, w: 70, h: 36, k: "llm", d: "현재 상태 해석. 생성 과업" },
+      { id: "next", t: "다음 행동?", x: 60, y: 200, w: 90, h: 36, k: "judge", d: "툴 집합 + 종료 = 닫힌 선택지. 결정 모델·규칙으로 대체 가능한 자리" },
+      { id: "act", t: "행동 (툴)", x: 220, y: 200, w: 80, h: 36, k: "tool", d: "툴 인자는 LLM 생성, 실행 전 게이트" },
+      { id: "obs", t: "관찰", x: 220, y: 130, w: 80, h: 36, k: "code", d: "툴 출력 절단·요약 후 상태에 추가" },
+      { id: "end", t: "종료 → 답변", x: 60, y: 290, w: 100, h: 36, k: "llm", d: "종료 판정이 '충분'이면 종합. 상한 도달 시 폴백" },
+    ],
+    edges: [["st","think","down"],["think","next","down"],["next","act"],["act","obs","up"],["obs","st","loop"],["next","end","down"]] },
+  { name: "Plan-and-Execute", sub: "계획을 먼저 세우고 단계별 실행, 필요 시 재계획", href: P3 + "06-agent-design-patterns.md",
+    cost: "1 (계획) + 단계 수 + 재계획 횟수", fit: "단계를 미리 그릴 수 있는 다단계 과업, 비용 예측 필요", bad: "중간 결과가 계획 전체를 바꾸는 과업", fail: "계획 경직 · 틀린 계획을 끝까지 실행",
+    steps: [
+      { id: "plan", t: "계획 수립 (단계 목록)", x: 20, y: 60, w: 150, h: 36, k: "llm", d: "스키마로 검증되는 단계 목록. 계획 자체를 검증·수정 가능" },
+      { id: "s1", t: "단계 1", x: 20, y: 140, w: 70, h: 32, k: "tool", d: "각 단계는 Tool-use 또는 소형 ReAct" },
+      { id: "s2", t: "단계 2", x: 110, y: 140, w: 70, h: 32, k: "tool", d: "단계 간 결과 전달은 상태(08)로" },
+      { id: "s3", t: "단계 N", x: 200, y: 140, w: 70, h: 32, k: "tool", d: "단계 수는 계획이 결정 → 비용 예측 가능" },
+      { id: "chk", t: "재계획 필요?", x: 290, y: 138, w: 80, h: 36, k: "judge", d: "단계 실패·관찰 불일치 시 트리거. 결정 모델·규칙 자리" },
+      { id: "syn", t: "종합 → 답변", x: 110, y: 230, w: 100, h: 36, k: "llm", d: "단계 결과 종합, citation 유지 (04)" },
+    ],
+    edges: [["plan","s1","down"],["s1","s2"],["s2","s3"],["s3","chk"],["chk","plan","loop"],["chk","syn","down"]] },
+  { name: "Reflection (self-critique)", sub: "생성 → 기준 대비 비판 → 수정, 합격 또는 상한", href: P3 + "06-agent-design-patterns.md",
+    cost: "2 × 반복 수 (상한)", fit: "명확한 품질 기준, 반복으로 측정 가능하게 개선 (테스트·형식)", bad: "기준이 주관적, 생성자와 평가자가 같은 맹점", fail: "자기 비판 무효 · 수렴 안 함",
+    steps: [
+      { id: "gen", t: "생성 (초안)", x: 40, y: 60, w: 100, h: 36, k: "llm", d: "답변·코드·문서 초안" },
+      { id: "crit", t: "비판 (기준 대비)", x: 40, y: 130, w: 110, h: 36, k: "llm", d: "평가자는 다른 모델·규칙·외부 신호(테스트)로 분리 권장" },
+      { id: "ok", t: "합격?", x: 40, y: 200, w: 60, h: 36, k: "judge", d: "루브릭 점수 → 합격 판정. 결정 모델 자리 (Decisions API 루브릭 점수)" },
+      { id: "fix", t: "수정", x: 230, y: 130, w: 70, h: 36, k: "llm", d: "비판을 반영해 재생성. 상한 N회" },
+      { id: "out", t: "출력", x: 40, y: 270, w: 60, h: 36, k: "code", d: "합격 또는 상한 도달 → 최선안 + 미해결 비판 명시" },
+    ],
+    edges: [["gen","crit","down"],["crit","ok","down"],["ok","fix"],["fix","gen","loop"],["ok","out","down"]] },
+  { name: "Router", sub: "분류 → 전용 핸들러", href: P3 + "02-query-understanding.md",
+    cost: "1 (분류) + 핸들러 비용", fit: "입력 유형이 이질, 유형별 전용 처리·모델", bad: "유형 경계가 불명확", fail: "오분류의 증폭 — 이후 전부 무효",
+    steps: [
+      { id: "in", t: "입력", x: 20, y: 160, w: 60, h: 36, k: "code", d: "정규화된 질의 + 대화 요약 (02)" },
+      { id: "cls", t: "경로 판정 + 확신도", x: 110, y: 160, w: 120, h: 36, k: "judge", d: "규칙 → 결정 모델 → 분류기 → LLM 순. 확신 < θ → 명확화 / 폴백" },
+      { id: "h1", t: "핸들러 A", x: 270, y: 80, w: 90, h: 32, k: "llm", d: "유형별 전용 프롬프트·에이전트·워크플로우" },
+      { id: "h2", t: "핸들러 B", x: 270, y: 160, w: 90, h: 32, k: "llm", d: "소형/대형 모델 분기도 여기서 (Part 5/02)" },
+      { id: "h3", t: "폴백 · 명확화", x: 270, y: 240, w: 90, h: 32, k: "code", d: "확신 낮음 또는 '기타' → 보수적 기본 경로 또는 사용자에게 되묻기" },
+    ],
+    edges: [["in","cls"],["cls","h1","fan"],["cls","h2"],["cls","h3","fan"]] },
+  { name: "Orchestrator-Worker", sub: "동적 분해 → 워커 실행 → 종합", href: P3 + "07-multi-agent-orchestration.md",
+    cost: "1 (분해) + 워커 수 (가변) + 1 (종합)", fit: "부분 과업을 미리 열거 불가, 다중 소스·파일·관점", bad: "과업 구조가 고정 (체이닝으로 충분)", fail: "분해 오류 · 워커 결과 충돌 · 종합 품질",
+    steps: [
+      { id: "orc", t: "오케스트레이터: 분해", x: 20, y: 60, w: 150, h: 36, k: "llm", d: "부분 과업 목록을 스키마로. 분해만 별도 평가" },
+      { id: "who", t: "어느 워커?", x: 200, y: 60, w: 80, h: 36, k: "judge", d: "워커 배정은 닫힌 선택지. 결정 모델·규칙 자리" },
+      { id: "w1", t: "워커 1", x: 20, y: 150, w: 70, h: 32, k: "tool", d: "Tool-use 또는 ReAct. 컨텍스트는 부분 과업만" },
+      { id: "w2", t: "워커 2", x: 110, y: 150, w: 70, h: 32, k: "tool", d: "병렬 실행 가능" },
+      { id: "w3", t: "워커 N", x: 200, y: 150, w: 70, h: 32, k: "tool", d: "워커 출력은 스키마로 검증" },
+      { id: "syn", t: "충돌 검사 → 종합", x: 60, y: 240, w: 140, h: 36, k: "llm", d: "워커 결과 모순·중복 제거 후 종합. 워커가 자체 루프를 가지면 Supervisor (07)" },
+    ],
+    edges: [["orc","who"],["who","w1","fanD"],["who","w2","fanD"],["who","w3","down"],["w1","syn","down"],["w2","syn","down"],["w3","syn","down"]] },
+];
+
+const svg = document.getElementById("pat");
+const NS = "http://www.w3.org/2000/svg";
+const tip = document.getElementById("tip");
+function el(name, attrs, parent) { const e = document.createElementNS(NS, name); for (const k in attrs) e.setAttribute(k, attrs[k]); (parent || svg).appendChild(e); return e; }
+function text(x, y, str, cls, parent, anchor) { const t = el("text", { x, y, class: cls || "", "text-anchor": anchor || "start" }, parent); t.textContent = str; return t; }
+function showTip(e, str) { tip.textContent = str; tip.style.left = (e.clientX + 12) + "px"; tip.style.top = (e.clientY + 12) + "px"; tip.style.opacity = 1; }
+function hideTip() { tip.style.opacity = 0; }
+
+const PW = 380, PH = 470, GX = 30, GY = 30, OX = 20, OY = 10;
+const DIAG_Y = 56; // 패널 안에서 다이어그램 시작 y (제목 아래)
+
+PATTERNS.forEach((p, i) => {
+  const col = i % 3, row = Math.floor(i / 3);
+  const px = OX + col * (PW + GX), py = OY + row * (PH + GY);
+  const g = el("g", { class: "panel-g", tabindex: "0", role: "link" });
+  el("rect", { x: px, y: py, width: PW, height: PH, class: "panel" }, g);
+  el("rect", { x: px, y: py, width: PW, height: 6, fill: "var(--reasoning)", rx: 3 }, g);
+  text(px + 16, py + 30, p.name, "p-title", g);
+  text(px + 16, py + 48, p.sub, "p-sub", g);
+  const go = () => { window.location.href = BASE + p.href; };
+  g.addEventListener("click", go);
+  g.addEventListener("keydown", e => { if (e.key === "Enter") go(); });
+  g.addEventListener("mousemove", e => showTip(e, p.name + " — " + p.sub + "  →  " + p.href));
+  g.addEventListener("mouseleave", hideTip);
+
+  // 스텝
+  const pos = {};
+  p.steps.forEach(s => {
+    const sx = px + s.x, sy = py + DIAG_Y + s.y;
+    pos[s.id] = { x: sx, y: sy, w: s.w, h: s.h };
+    const sg = el("g", { class: "step " + s.k }, g);
+    el("rect", { x: sx, y: sy, width: s.w, height: s.h }, sg);
+    text(sx + s.w / 2, sy + s.h / 2 + 4, s.t, "", sg, "middle");
+    sg.addEventListener("mousemove", e => { e.stopPropagation(); showTip(e, "[" + s.t + "] " + s.d); });
+  });
+  // 간선
+  p.edges.forEach(([a, b, mode]) => {
+    const A = pos[a], B = pos[b];
+    let d;
+    if (mode === "down") d = `M${A.x + A.w / 2},${A.y + A.h} L${B.x + B.w / 2},${B.y}`;
+    else if (mode === "up") d = `M${A.x + A.w / 2},${A.y} L${B.x + B.w / 2},${B.y + B.h}`;
+    else if (mode === "loop") {
+      // 오른쪽으로 돌아 올라가는 되돌림
+      const rx = Math.max(A.x + A.w, B.x + B.w) + 14;
+      d = `M${A.x + A.w},${A.y + A.h / 2} L${rx},${A.y + A.h / 2} L${rx},${B.y + B.h / 2} L${B.x + B.w + 1},${B.y + B.h / 2}`;
+    }
+    else if (mode === "fan" || mode === "fanD") d = `M${A.x + A.w},${A.y + A.h / 2} L${B.x},${B.y + B.h / 2}`;
+    else d = `M${A.x + A.w},${A.y + A.h / 2} L${B.x},${B.y + B.h / 2}`;
+    if (mode === "fanD") d = `M${A.x + A.w / 2},${A.y + A.h} L${B.x + B.w / 2},${B.y}`;
+    el("path", { d, class: "e" + (mode === "loop" ? " loop" : "") }, g);
+  });
+  // 메타 정보 (패널 하단)
+  const my = py + PH - 78;
+  const meta = [["비용", p.cost], ["적합", p.fit], ["부적합", p.bad], ["실패 모드", p.fail]];
+  meta.forEach(([k, v], j) => {
+    const t = el("text", { x: px + 16, y: my + j * 17, class: "meta" }, g);
+    const b = el("tspan", {}, t); b.textContent = k + ": "; b.setAttribute("class", "meta"); b.style.fontWeight = "600"; b.style.fill = "var(--fg)";
+    const s = el("tspan", {}, t); s.textContent = v.length > 46 ? v.slice(0, 45) + "…" : v;
+  });
+});
+
+// 하단 노트
+(function () {
+  const y = OY + 2 * (PH + GY) + 10;
+  text(OX, y, "선택: 툴 한 번이면 Tool-use → 계획 가능하면 Plan-and-Execute → 매 스텝 의존·≤10스텝이면 ReAct → 기준 있는 품질 반복이면 Reflection(평가자 분리) → 유형 이질이면 Router → 동적 분해면 Orchestrator-Worker", "meta");
+  text(OX, y + 18, "판단이 어려우면 → Router → Plan-and-Execute, 각 단계는 Tool-use. 호출 수가 거의 고정이라 비용·디버깅이 통제된다. 모든 점선(판정) 자리는 결정 모델(Jev / Decisions API)·규칙으로 대체 가능 — 한국어 [실측] 선행.", "meta");
+})();
+</script>
+</body>
+</html>

@@ -58,6 +58,20 @@ Declarative에서 일관성은 가장 깨지기 쉽다. 에이전트가 매번 �
 
 상태는 [04](04-streaming-state-sync.md)의 생명주기·툴 호출 이벤트에서 파생된다. 컴포넌트마다 상태 variant를 카탈로그에 정의해 두면 매핑이 상태를 따로 고민하지 않아도 된다.
 
+"부분"·"폴백" 고지의 원천은 UI 자체 폴백만이 아니다. Knowledge·Reasoning의 폴백·부분 상태는 계약 ② `degradation[]`([03](03-component-registry-schema.md))으로 도착하며, 코드마다 **고지 문구 토큰**이 하나씩 고정된다 (불균형 ④ 반영).
+
+| `degradation[]` 코드 | 고지 문구 토큰 | 기본 문구(ko) | 표시 위치 · 라이브 영역 |
+|---|---|---|---|
+| `retrieval_keyword_only` | `notice.degraded.retrieval_keyword_only` | "의미 검색을 사용할 수 없어 키워드 검색 결과로 답했습니다" | 답변 상단 배너 · `polite` |
+| `evidence_partial` | `notice.degraded.evidence_partial` | "근거 일부를 불러오지 못했습니다" | citation 영역 배지 · `polite` |
+| `conflict_check_metadata_only` | `notice.degraded.conflict_check_metadata_only` | "상충 근거 검사가 축소되었습니다" | citation 영역 배지 · `polite` |
+| `grounding_unverified` | `notice.degraded.grounding_unverified` | "이 답변은 근거 검증을 거치지 않았습니다" | 답변 본문 상단 배지 · `polite` |
+| `routing_fallback` | `notice.degraded.routing_fallback` | "기본 경로로 처리했습니다" | 응답 하단(접힘) · 없음 |
+| `decision_fallback` | `notice.degraded.decision_fallback` | "표시 방식을 기본값으로 선택했습니다" | 폴백 고지 자리 · `polite` |
+| `approval_pending_display_failed` | `notice.error.approval_pending_display_failed` | "승인 UI를 표시할 수 없습니다. 승인함으로 이동" | 승인 카드 자리의 에러 카드 · `assertive` |
+
+일관성 원칙: **같은 코드에는 같은 토큰**(언어별 리소스만 다름), 에이전트는 고지 문구를 생성하지 않는다. 코드가 여럿이면 가장 심각한 하나를 배너로, 나머지는 접힌 목록으로. 토큰 렌더 여부는 클라이언트 렌더 보고에 코드별로 남겨 [10](10-evaluation-genui.md)의 "저하 플래그 표시율" 분자가 된다.
+
 ### 접근성 트리
 
 Controlled 컴포넌트는 구현 시점에 접근성을 갖춘다(역할·라벨·키보드·대비). 문제는 **동적 삽입**과 **생성 트리**다.
@@ -220,7 +234,7 @@ SLI 후보: 접근성 자동 검사 위반 수(CI), 런타임 접근성 검증 �
 | 가드레일 위치 | **출력**: 런타임 접근성 검증기(Declarative), CI 자동 검사(Controlled), 밀도 상한·구조화 값 스키마 = UI 트리 검증의 접근성 층 |
 | 게이트 출력과 판정 수단 | 렌더(통과) / 텍스트 폴백(저하, 고지 필수) / 배포 차단(CI 심각 위반). 규칙만(검사 도구·검증기). 의미적 접근성은 사람 샘플링 |
 | 소유자 (A) | 접근성 기준: 디자인 책임자(접근성 전문가 C). 토큰·문구: 디자인 시스템 팀. 다국어 리소스: 현지화 담당. R: 프론트엔드 |
-| 감사 추적에 남길 필드 | 접근성 검증 결과(트리 해시·규칙 버전·불합격 규칙), 폴백 고지 표시 여부, 적용된 토큰 세트·언어·`dir`, 사용자 설정(밀도·모션·텍스트 선호). 법규 대응을 위해 요건 영역의 검증 결과는 장기 보존 |
+| 감사 추적에 남길 필드 | 접근성 검증 결과(트리 해시·규칙 버전·불합격 규칙), 폴백 고지 표시 여부, `degradation[]` 코드별 고지 토큰 렌더 여부(불균형 ④ 반영), 적용된 토큰 세트·언어·`dir`, 사용자 설정(밀도·모션·텍스트 선호). 법규 대응을 위해 요건 영역의 검증 결과는 장기 보존 |
 
 ### 운영 준비도 체크
 - [ ] Declarative 런타임 접근성 검증 실패가 텍스트 폴백 + 고지로 떨어지고 실패율이 집계되는가

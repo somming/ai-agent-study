@@ -67,6 +67,7 @@ Part 3의 생성 단계가 Part 4로 넘기는 응답의 형태. 최소 구성�
     "requires_approval": false,
     "fallback": "text"
   },
+  "degradation": ["retrieval_keyword_only"],
   "catalog_version": "2.3.0"
 }
 ```
@@ -76,6 +77,19 @@ Part 3의 생성 단계가 Part 4로 넘기는 응답의 형태. 최소 구성�
 - `component`와 `props`는 카탈로그 스키마로 검증된다. 불합격이면 `fallback`
 - `confidence`는 선택 수단이 결정 모델이면 보정 확률, LLM이면 없음(또는 비보정 표시). [05](05-intent-to-ui-mapping.md)
 - `catalog_version`은 프론트가 자기 레지스트리 버전과 비교해 호환성을 판단하는 근거
+- `degradation[]`은 **선택 필드**다. 없거나 비어 있으면 정상 응답. 값은 닫힌 코드 enum이며 Knowledge·Reasoning·Interaction의 폴백·부분 상태를 Interaction 끝점(상태 variant + [09](09-ux-accessibility.md) 고지 토큰)까지 전달한다. 선택 필드 추가이므로 봉투 **마이너** 버전, 구 프론트는 무시(tolerant reader). 코드 추가도 마이너, 코드 삭제·의미 변경은 메이저 (불균형 ④ 반영)
+
+| `degradation[]` 코드 | 발생 지점 | 의미 | 상태 variant | 표시 위치 |
+|---|---|---|---|---|
+| `retrieval_keyword_only` | [2/04](../02-data-pipeline/04-embedding-indexing.md) | 의미 검색 불가 → BM25 단독 | 부분(partial) | 답변 상단 고지 배너 |
+| `evidence_partial` | [2/08](../02-data-pipeline/08-grounding-data-design.md) | 근거 조립이 일부만 성공 | 부분(partial) | citation 영역 배지 |
+| `conflict_check_metadata_only` | [2/08](../02-data-pipeline/08-grounding-data-design.md) | 상충 검사를 메타데이터만으로 수행 | 부분(partial) | citation 영역 배지 |
+| `grounding_unverified` | [3/04](../03-agent-workflow-rag/04-generation-grounding.md) | 검증기 미통과·미검증(등급 1 경로만 허용) | 부분(partial) | 답변 본문 상단 배지(신뢰도 배지 옆) |
+| `routing_fallback` | [3/02](../03-agent-workflow-rag/02-query-understanding.md)·[3/11](../03-agent-workflow-rag/11-decision-layer.md) | 라우터 폴백 → 규칙 기본 경로 | 부분(partial) | 응답 하단 고지(접힘) |
+| `decision_fallback` | [3/11](../03-agent-workflow-rag/11-decision-layer.md)·[05](05-intent-to-ui-mapping.md) | 결정 모델 폴백 → 규칙 기본값 또는 텍스트 | 부분(partial) / UI 자체가 텍스트로 떨어지면 폴백(fallback) | 폴백 고지 문구 자리 |
+| `approval_pending_display_failed` | [06](06-hitl-ui-patterns.md) | 승인 카드 표시 실패, `AWAITING_APPROVAL` 유지 | **에러 카드**(부분 아님, 텍스트 폴백 금지) | 승인 카드 자리의 에러 카드 |
+
+같은 코드는 항상 같은 variant·같은 고지 토큰으로 렌더된다(문구 매핑은 [09](09-ux-accessibility.md)). 표시 여부는 [10](10-evaluation-genui.md)의 "저하 플래그 표시율"로 측정한다.
 
 Declarative에서는 `component`+`props` 자리에 `tree`가 오고, 트리 노드 각각이 카탈로그 항목을 참조한다.
 
@@ -203,7 +217,7 @@ SLI 후보: 스키마 검증 실패율(컴포넌트별), 카탈로그 대조 실
 | 버전 관리 대상 | 바꾸면 영향받는 것 | 회귀 테스트 | 함께 배포할 것 (호환) |
 |---|---|---|---|
 | 카탈로그 (컴포넌트 목록·props 스키마·허용 조합) | 툴 정의, 결정 모델 enum, 검증기, 매핑 테이블, 골든셋, 렌더러 바인딩 | 스키마 호환 테스트(구 버전 응답이 신 검증기 통과), 선택 정확도 골든셋, 컴포넌트 렌더 스냅샷 | **카탈로그 ↔ 응답 스키마(계약 ②) ↔ 렌더러 바인딩** — 롤백 단위 |
-| 계약 ② 봉투 (`text`·`citations`·`ui_intent`·`catalog_version`) | Part 3 생성 단계, Part 4 전체 | 계약 테스트(Part 3·4 양쪽) | Part 3 응답 생성기 ↔ Part 4 어댑터 |
+| 계약 ② 봉투 (`text`·`citations`·`ui_intent`·`degradation[]`·`catalog_version`) | Part 3 생성 단계, Part 4 전체; `degradation[]` 코드 enum은 2/04·2/08·3/02·3/04·3/11·05·06 발행자와 09 고지 토큰 (불균형 ④ 반영) | 계약 테스트(Part 3·4 양쪽) | Part 3 응답 생성기 ↔ Part 4 어댑터 |
 | 디자인 토큰 세트 | 시각만. 카탈로그 무관 | 시각 회귀(스크린샷) | 렌더러만 |
 | `bindings` 참조 스키마 (Part 2/08 근거 단위 등) | citation 컴포넌트 props | 참조 스키마 버전 호환 테스트 | Part 2/08 스키마 버전 |
 | 렌더러별 지원 매트릭스 | 매핑 규칙의 플랫폼 제외 조건 | 플랫폼별 전수 렌더 테스트 | 렌더러 버전 |

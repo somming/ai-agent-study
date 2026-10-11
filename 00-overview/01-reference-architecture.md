@@ -94,7 +94,7 @@ updated: 2026-10-11
 | 계약 | 방향 | 정의하는 곳 | 소비하는 곳 | 최소 내용 |
 |---|---|---|---|---|
 | **① 근거 단위 (evidence)** | Knowledge → Reasoning | [2/08](../02-data-pipeline/08-grounding-data-design.md) | [3/03](../03-agent-workflow-rag/03-retrieval-reranking.md), [3/04](../03-agent-workflow-rag/04-generation-grounding.md), [4/06](../04-dynamic-ui/06-hitl-ui-patterns.md) | 근거 ID, 본문(또는 트리플), 출처(문서·위치·버전·시점), 권한 태그, 신뢰도 등급 |
-| **② 렌더 가능한 응답** | Reasoning → Interaction | [4/03](../04-dynamic-ui/03-component-registry-schema.md), [3/04](../03-agent-workflow-rag/04-generation-grounding.md) | [4/05](../04-dynamic-ui/05-intent-to-ui-mapping.md), [4/07](../04-dynamic-ui/07-frontend-integration.md) | 텍스트, citations(계약 ① 참조), ui_intent(선택적: 컴포넌트명 + 데이터), 확신도, 승인 필요 여부 |
+| **② 렌더 가능한 응답** | Reasoning → Interaction | [4/03](../04-dynamic-ui/03-component-registry-schema.md), [3/04](../03-agent-workflow-rag/04-generation-grounding.md) | [4/05](../04-dynamic-ui/05-intent-to-ui-mapping.md), [4/07](../04-dynamic-ui/07-frontend-integration.md) | 텍스트, citations(계약 ① 참조), ui_intent(선택적: 컴포넌트명 + 데이터), 확신도, 승인 필요 여부, `degradation[]`(선택: 저하 코드 enum — Knowledge·Reasoning의 폴백·부분 상태를 Interaction 고지로 잇는 필드, 정의는 [4/03](../04-dynamic-ui/03-component-registry-schema.md)) (불균형 ④ 반영) |
 | **③ 사용자 이벤트** | Interaction → Reasoning | [4/04](../04-dynamic-ui/04-streaming-state-sync.md), [3/12](../03-agent-workflow-rag/12-guardrails-hitl.md) | [3/08](../03-agent-workflow-rag/08-state-memory-context.md), [3/12](../03-agent-workflow-rag/12-guardrails-hitl.md) | 이벤트 유형(승인·거절·수정·선택·피드백), 대상(응답 ID·컴포넌트 ID), 페이로드, 사용자·시각, 서버 재검증 결과 |
 
 계약은 **스키마 파일**로 저장소에 두고, 세 레이어의 테스트가 같은 스키마를 참조하게 한다. 계약이 바뀌면 세 레이어가 동시에 바뀐다는 뜻이므로 변경 절차를 [Part 5/05](../05-cross-cutting/05-llmops-agentops.md)에 둔다.
@@ -106,7 +106,7 @@ updated: 2026-10-11
 | 원칙 | 계약에 적용하면 | 효과 |
 |---|---|---|
 | **안정 계약, 가변 구현** | 계약 ①②③은 버전을 붙여 느리게 바꾼다. 계약 뒤의 구현(벡터DB, 모델, 청킹, 렌더러, 프로토콜)은 계약을 지키는 한 자유롭게 교체 | 임베딩 모델 교체가 Reasoning·Interaction에 보이지 않는다 |
-| **스키마 진화** | 필드 추가는 자유, 삭제·의미 변경은 버전 상승. 소비자는 모르는 필드를 무시(tolerant reader) | 근거 단위에 신뢰도 등급을 추가해도 기존 UI가 깨지지 않는다 |
+| **스키마 진화** | 필드 추가는 자유, 삭제·의미 변경은 버전 상승. 소비자는 모르는 필드를 무시(tolerant reader) | 근거 단위에 신뢰도 등급을 추가해도 기존 UI가 깨지지 않는다. 계약 ②에 `degradation[]` 선택 필드를 더한 것이 **마이너 버전** 예시 — 구 프론트는 무시하고 신 프론트만 고지를 렌더한다 (불균형 ④ 반영) |
 | **포트와 어댑터** | 계약을 구현하는 외부 의존은 내부 인터페이스(`retrieve()`, `generate()`, `decide()`, `render()`) 뒤에 어댑터로 | MCP 개정·AG-UI 버전 업이 어댑터 교체로 끝난다 |
 | **코드가 아닌 데이터로** | 계약의 값 어휘(문서 유형, 컴포넌트 이름, 라우팅 경로, 임계값)는 코드가 아닌 버전 관리되는 설정·온톨로지에서 | 조직 개편·컴포넌트 추가가 배포 없이 설정 변경으로 |
 | **시점 재현성** | 모든 레코드·트레이스에 계약 버전 + 지식·모델·규칙 버전 키 | 감사에서 "그때의 답"을 그때의 버전으로 재구성 |

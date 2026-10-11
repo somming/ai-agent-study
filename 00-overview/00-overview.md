@@ -25,6 +25,7 @@ updated: 2026-10-11
 
 | 페이지 | 내용 | 시각화 |
 |---|---|---|
+| [00 설계 시 고려할 것 — 한 페이지 종합](00-design-considerations.md) | 시나리오 → 요구 변수 7개 → 레이어 범위와 계약 3개 → 단계별 기본값 → 운영 설계 6축 → 산출물 체크리스트. 위키 전체의 압축본 | — |
 | [01 레퍼런스 아키텍처](01-reference-architecture.md) | Knowledge / Reasoning·Action / Interaction 3계층과 횡단 관심사. 각 단계 → 담당 페이지 매핑 | [reference-architecture.html](../assets/html/reference-architecture.html) |
 | [02 종합 기술 선택 결정 트리](02-decision-guide.md) | 요구사항 변수(데이터 유형, 규모, 지연, 근거 요구, 규제, 팀 역량)에서 출발해 단계별 기본값에 도달하는 질문 트리 | decision-tree.html (예정) |
 | [03 트렌드 레이더 2026](03-trend-radar-2026.md) | 2025-10 ~ 2026-10 트렌드를 채택 / 시험 / 관찰 / 보류로 배치, 각 트렌드가 적용되는 단계 링크 | trend-radar.html (예정) |

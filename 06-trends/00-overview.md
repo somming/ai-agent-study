@@ -4,7 +4,7 @@ part: 06-trends
 stage: all
 tags: [overview, trends]
 maturity: 관찰
-status: draft
+status: review
 updated: 2026-10-11
 ---
 

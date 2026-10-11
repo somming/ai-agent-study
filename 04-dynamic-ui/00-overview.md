@@ -4,7 +4,7 @@ part: 04-dynamic-ui
 stage: interaction
 tags: [overview, generative-ui, ag-ui, a2ui, mcp-apps]
 maturity: 시험
-status: draft
+status: review
 updated: 2026-10-11
 ---
 

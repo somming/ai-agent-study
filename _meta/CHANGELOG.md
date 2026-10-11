@@ -4,6 +4,11 @@
 
 ## 2026-10-11 (3차) — 전체 Part 본문 작성
 
+- 상태전이 — `07-appendix-scenarios/01~03` stub → **review**. 시나리오 A(사내 문서 QA) / B(커머스 상담+GenUI) / C(운영 인시던트). 각 2절은 0/02 결정 트리 변수 V1~V15 경로, 3절 전 행에 선택/대안/이유/근거 링크, 3.5절 트렌드 세 축 적용, 5절 주차 계획(골든셋 1주차), 7절 `[실측]` 과제
+- 신규 — HTML 3종: `scenario-document-qa`, `scenario-commerce-genui`, `scenario-ops-incident` (공통 노드 집합 위에 선택/부분/미선택 표시, 질의 흐름 번호 배지)
+- 수정 — 시나리오가 99 매트릭스와 어긋난 5건을 매트릭스 기준으로 조정(A 결정 모델은 섀도 비교군, A NLI 검증기는 2단계, B 변환기는 상품 질의만, B 단일 테넌트, B 환불은 접수만)
+- 상태전이 — 각 Part `00-overview.md` draft → **review**
+
 - 상태전이 — `00-overview/01, 02, 03, 04` stub/draft → **review**. 레퍼런스 아키텍처에 레이어 간 계약 ①②③ 정의, 종합 결정 트리 Q1~Q15 + 단계별 기본값 34행, 트렌드 레이더 28항목, 용어집
 - 상태전이 — `02-data-pipeline/01~10, 99` stub → **review** (11개)
 - 상태전이 — `03-agent-workflow-rag/01~14, 99` stub → **review** (15개)

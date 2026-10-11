@@ -4,7 +4,7 @@ part: 02-data-pipeline
 stage: knowledge
 tags: [overview, data-pipeline, grounding]
 maturity: 채택
-status: draft
+status: review
 updated: 2026-10-11
 ---
 

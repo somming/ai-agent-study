@@ -4,7 +4,7 @@ part: 01-foundations
 stage: all
 tags: [overview, foundations]
 maturity: 채택
-status: draft
+status: review
 updated: 2026-10-11
 ---
 

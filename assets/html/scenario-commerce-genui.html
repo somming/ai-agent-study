@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>시나리오 B: 커머스 상담 + Generative UI — 전체 아키텍처</title>
+<style>
+  /* 레이어 색상은 작성 가이드 7절·reference-architecture.html과 동일하게 고정 */
+  :root {
+    --bg: #fafaf8; --fg: #1d1d1b; --muted: #6b6b6b; --line: #d9d9d4; --card: #ffffff;
+    --knowledge: #2E7D6B; --reasoning: #3A5FA8; --interaction: #B5651D; --cross: #6B6B6B;
+    --trend: #8E44AD;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #15161a; --fg: #ececea; --muted: #9a9a95; --line: #33353b; --card: #1e2026; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.5 -apple-system, "Pretendard", "Noto Sans KR", system-ui, sans-serif; }
+  header { padding: 20px 28px 8px; }
+  header h1 { margin: 0 0 4px; font-size: 20px; font-weight: 650; }
+  header p { margin: 0; color: var(--muted); }
+  header .query { margin-top: 6px; color: var(--fg); font-size: 13px; }
+  .legend { display: flex; gap: 16px; flex-wrap: wrap; padding: 8px 28px 0; color: var(--muted); font-size: 12px; align-items: center; }
+  .legend span::before { content: ""; display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: -1px; background: var(--c); }
+  .legend span.sw-part::before { background: var(--c); opacity: .6; }
+  .legend span.sw-off::before { background: var(--c); opacity: .25; }
+  .legend span.sw-trend::before { background: transparent; border: 2px dashed var(--trend); width: 8px; height: 8px; }
+  .legend span.sw-step::before { background: var(--fg); border-radius: 50%; }
+  .wrap { padding: 12px 28px 20px; }
+  svg { width: 100%; height: auto; display: block; }
+  .layer-bg { fill: var(--card); stroke: var(--line); }
+  .layer-label { font-size: 13px; font-weight: 700; letter-spacing: .02em; }
+  .layer-sub { font-size: 11px; fill: var(--muted); }
+  .node { cursor: pointer; }
+  .node rect { fill: var(--card); stroke-width: 1.5; rx: 6; }
+  .node text { font-size: 11.5px; fill: var(--fg); pointer-events: none; }
+  .node .idx { font-size: 10px; fill: var(--muted); }
+  .node:hover rect, .node:focus rect { filter: brightness(0.96); stroke-width: 2.5; }
+  .node.trend rect { stroke-dasharray: 4 3; }
+  .node.on rect { stroke-width: 2.2; }
+  .node.part { opacity: .72; }
+  .node.off { opacity: .3; }
+  .node.off rect { stroke-dasharray: 2 3; }
+  .node:focus { outline: none; }
+  .badge circle { fill: var(--fg); }
+  .badge text { fill: var(--bg); font-size: 10px; font-weight: 700; pointer-events: none; }
+  .flow { stroke: var(--fg); stroke-width: 1.6; fill: none; marker-end: url(#arrow); opacity: .75; }
+  .flow-contract { stroke: var(--muted); stroke-width: 1.2; fill: none; stroke-dasharray: 5 4; marker-end: url(#arrow-muted); }
+  .contract { fill: var(--bg); stroke: var(--line); rx: 4; }
+  .contract-text { font-size: 11px; fill: var(--fg); }
+  .ext rect { fill: var(--bg); stroke: var(--muted); stroke-width: 1.5; rx: 6; }
+  .ext text { font-size: 12px; fill: var(--fg); }
+  #tip { position: fixed; pointer-events: none; background: var(--fg); color: var(--bg); padding: 7px 10px; border-radius: 6px; font-size: 12px; line-height: 1.4; max-width: 360px; opacity: 0; transition: opacity .1s; z-index: 10; }
+  #tip b { display: block; margin-bottom: 2px; }
+  #tip .path { opacity: .7; display: block; margin-top: 3px; font-size: 11px; }
+  .steps { padding: 0 28px 16px; font-size: 12.5px; color: var(--fg); columns: 2; column-gap: 32px; }
+  .steps ol { margin: 0; padding-left: 20px; }
+  .steps li { margin: 0 0 3px; break-inside: avoid; }
+  .steps li span { color: var(--muted); }
+  footer { padding: 0 28px 24px; color: var(--muted); font-size: 12px; }
+  footer a { color: inherit; }
+  @media (max-width: 800px) { .steps { columns: 1; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>시나리오 B: 커머스 상담 + Generative UI — 전체 아키텍처</h1>
+  <p>Interaction 중심 · 툴 호출 에이전트 · Controlled → 비교표만 Declarative. 진한 노드만 이 시나리오가 선택한 단계이고, 흐린 노드는 뺀 단계입니다. 번호는 시나리오 페이지 4절의 질의 흐름과 같습니다. 노드 호버 시 선택 이유 한 줄, 클릭 시 근거 페이지로 이동합니다.</p>
+  <p class="query">흐름 예시 질의: “20만 원 이하 노이즈캔슬링 헤드폰 3개 비교해 줘. 내 폰이랑 호환되는 걸로”</p>
+</header>
+<div class="legend">
+  <span style="--c: var(--interaction)">Interaction</span>
+  <span style="--c: var(--reasoning)">Reasoning / Action</span>
+  <span style="--c: var(--knowledge)">Knowledge</span>
+  <span style="--c: var(--cross)">Cross-cutting</span>
+  <span class="sw-trend">트렌드 세 축(온톨로지 · 뉴로심볼릭 · 결정 모델)</span>
+  <span style="--c: var(--fg)">선택</span>
+  <span class="sw-part" style="--c: var(--fg)">부분 선택</span>
+  <span class="sw-off" style="--c: var(--fg)">미선택(흐림)</span>
+  <span class="sw-step" style="--c: var(--fg)">번호 = 4절 질의 흐름 단계</span>
+</div>
+<div class="wrap">
+<svg id="arch" viewBox="0 0 1240 740" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="시나리오 B: 커머스 상담 + Generative UI — 전체 아키텍처">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="currentColor"/>
+    </marker>
+    <marker id="arrow-muted" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#6b6b6b"/>
+    </marker>
+  </defs>
+</svg>
+</div>
+<div class="steps" id="steps"></div>
+<div id="tip"></div>
+<footer>
+  트렌드 축: 온톨로지는 상품 온톨로지 → UI 매핑·게이트·그래프의 공통 어휘(2/06·4/05) · 뉴로심볼릭은 변환기 + 규칙 게이트(3/10) · 결정 모델은 intent·UI 선택·승인 필요 판정 섀도 → 지점별 교체(3/11·3/02·4/05). 결제는 에이전트 밖. 상세는 <a href="../../07-appendix-scenarios/02-commerce-assistant-genui.md">시나리오 페이지</a>, 3-Layer 원형은 <a href="reference-architecture.html">레퍼런스 아키텍처</a>, 계약 ①②③은 <a href="../../00-overview/01-reference-architecture.md">01 레퍼런스 아키텍처</a>.
+</footer>
+
+<script>
+// ---- 데이터 (링크는 assets/html/ 기준 상대 경로) ----
+const BASE = "../../";
+const LAYOUT = {"interaction": {"label": "Interaction", "sub": "Part 4 · 동적 UI 연동", "y": 90, "color": "var(--interaction)", "rows": [["ui-01", "ui-02", "ui-03", "ui-05", "ui-04", "ui-06"], ["ui-07", "ui-08", "ui-09", "ui-10", "ui-x"]]}, "reasoning": {"label": "Reasoning / Action", "sub": "Part 3 · Agent 워크플로우 · LLM/RAG", "y": 310, "color": "var(--reasoning)", "rows": [["r-02", "r-03", "r-04", "r-10", "r-09", "r-12"], ["r-05", "r-01", "r-06", "r-07", "r-11", "r-08"]]}, "knowledge": {"label": "Knowledge", "sub": "Part 2 · 데이터 파이프라인 · 근거 데이터", "y": 530, "color": "var(--knowledge)", "rows": [["k-01", "k-02", "k-03", "k-04", "k-05", "k-06"], ["k-08", "k-07", "k-10", "k-09"]]}};
+const NODES = {"ui-01": {"t": "GenUI 패턴", "i": "4/01", "href": "04-dynamic-ui/01-generative-ui-spectrum.md", "state": "on", "why": "Controlled 기본(카드·리스트·옵션·필터·승인) + compare_products 의도만 Declarative 비교표(열 구성이 매번 다름) + 트리 검증기", "trend": false}, "ui-02": {"t": "프로토콜(전송층)", "i": "4/02", "href": "04-dynamic-ui/02-protocols-ag-ui-a2ui-mcp-apps.md", "state": "on", "why": "AG-UI 전송층(Python 백엔드 ↔ React 프론트, 팀 분리). 비교표 트리는 커스텀 이벤트. A2UI는 네이티브 확장 시 재검토", "trend": false}, "ui-03": {"t": "컴포넌트 레지스트리", "i": "4/03", "href": "04-dynamic-ui/03-component-registry-schema.md", "state": "on", "why": "수십 개, 의도 그룹 계층화, 디자인 시스템 패키지 내장. bindings는 상품 온톨로지 클래스 — 계약 ②", "trend": false}, "ui-05": {"t": "의도 → UI 매핑", "i": "4/05", "href": "04-dynamic-ui/05-intent-to-ui-mapping.md", "trend": true, "state": "on", "why": "규칙(권한·항목 수·모바일 폭) → 온톨로지(주 엔티티 → 후보) → LLM(결정 모델은 한국어 골든셋 통과 후). 행동 의도는 규칙만"}, "ui-04": {"t": "스트리밍·상태 동기화", "i": "4/04", "href": "04-dynamic-ui/04-streaming-state-sync.md", "state": "on", "why": "SSE + POST, 스냅샷 + JSON Patch(장바구니 공유 상태), 순서 번호, 승인 optimistic은 '전송됨'까지 + 멱등 키 — 계약 ③", "trend": false}, "ui-06": {"t": "HITL UI", "i": "4/06", "href": "04-dynamic-ui/06-hitl-ui-patterns.md", "state": "on", "why": "승인 카드(장바구니·옵션 변경: 금액·수량·가역성·as_shown_hash), 선택지 제시(확신도 < θ), 피드백", "trend": false}, "ui-07": {"t": "프론트엔드 렌더러", "i": "4/07", "href": "04-dynamic-ui/07-frontend-integration.md", "state": "on", "why": "React + CopilotKit 또는 AG-UI SDK(어댑터 뒤), 반응형 모바일 웹, 의도 그룹별 지연 로딩", "trend": false}, "ui-08": {"t": "보안·샌드박싱", "i": "4/08", "href": "04-dynamic-ui/08-security-sandboxing.md", "state": "on", "why": "Controlled: props 스키마 + 서버 재검증. Declarative 비교표: 트리·조합·바인딩 검증 + 렌더러 값 평가 금지", "trend": false}, "ui-09": {"t": "UX·접근성", "i": "4/09", "href": "04-dynamic-ui/09-ux-accessibility.md", "state": "on", "why": "밀도 상한(모바일 열 ≤ 3 + 요약 카드), 비교표 런타임 접근성 검증, 텍스트 폴백", "trend": false}, "ui-10": {"t": "GenUI 평가", "i": "4/10", "href": "04-dynamic-ui/10-evaluation-genui.md", "state": "on", "why": "의도 유형 층화 A/B(비교: 표 vs 텍스트), 수정률·무시율·폴백률, 결정 모델 보정 곡선", "trend": false}, "ui-x": {"t": "A2UI · MCP Apps(네이티브·서드파티 UI)", "i": "4/02", "href": "04-dynamic-ui/02-protocols-ag-ui-a2ui-mcp-apps.md", "state": "off", "why": "미선택 — 모바일 웹까지는 자체 트리로 충분. 네이티브(A2UI v0.9 [벤더])·서드파티 UI(MCP Apps)는 2차", "trend": false}, "r-02": {"t": "질의 이해·라우팅", "i": "3/02", "href": "03-agent-workflow-rag/02-query-understanding.md", "state": "on", "why": "intent 라우팅(탐색·비교·옵션·장바구니·주문·정책·범위 밖): 규칙 + 소형 LLM 시작 → 결정 모델 vs 분류기 한국어 비교. 슬롯 추출", "trend": false}, "r-03": {"t": "검색·리랭킹", "i": "3/03", "href": "03-agent-workflow-rag/03-retrieval-reranking.md", "state": "on", "why": "상품: 온톨로지 필터 → BM25↑ hybrid. 리뷰: hybrid + cross-encoder + 추출형 압축. 레코드·문장 단위로 환원", "trend": false}, "r-04": {"t": "생성·근거 강제", "i": "3/04", "href": "03-agent-workflow-rag/04-generation-grounding.md", "state": "on", "why": "구조화 출력 — 추천 사유에 레코드·리뷰 evidence_id, 가격·재고·배송 값은 생성 금지(레코드 바인딩), citation 존재 검증", "trend": false}, "r-10": {"t": "뉴로심볼릭 검증", "i": "3/10", "href": "03-agent-workflow-rag/10-neuro-symbolic-reasoning.md", "trend": true, "state": "on", "why": "변환기 + 게이트: 상품 질의는 구조화 필터 → 읽기 전용 쿼리, 추천·장바구니 제안 앞에 규칙 게이트(재고·유효 가격·정책·호환·한도)"}, "r-09": {"t": "툴 / MCP", "i": "3/09", "href": "03-agent-workflow-rag/09-tools-and-mcp.md", "state": "on", "why": "네이티브 함수 10~20개, 등급: 읽기 / 쓰기-가역(장바구니, 멱등 키) / 외부 전송(환불 접수). 결제 툴 없음", "trend": false}, "r-12": {"t": "가드레일·HITL", "i": "3/12", "href": "03-agent-workflow-rag/12-guardrails-hitl.md", "state": "on", "why": "입출력 + 행동 가드레일(정책 엔진). 장바구니는 동기 승인 카드(본인 확인), 환불 접수는 비동기 승인. 리뷰 본문은 외부 텍스트 등급", "trend": false}, "r-05": {"t": "워크플로우 vs 에이전트", "i": "3/05", "href": "03-agent-workflow-rag/05-workflow-vs-agent.md", "state": "on", "why": "라우팅 + 오케스트레이터-워커(탐색·비교·옵션·장바구니·주문·정책). 워커는 Tool-use 에이전트, 스텝 상한 3", "trend": false}, "r-01": {"t": "RAG 패턴", "i": "3/01", "href": "03-agent-workflow-rag/01-rag-architecture-patterns.md", "state": "on", "why": "Advanced RAG — 상품은 구조화 필터(변환기), 리뷰·정책은 hybrid + 리랭킹, 호환·대체는 그래프 1홉", "trend": false}, "r-06": {"t": "에이전트 패턴", "i": "3/06", "href": "03-agent-workflow-rag/06-agent-design-patterns.md", "state": "on", "why": "Tool-use + Router. 비교 워커만 Plan-and-Execute(후보 수집 → 속성 정렬 → 표 구성)", "trend": false}, "r-07": {"t": "멀티 에이전트 오케스트레이션", "i": "3/07", "href": "03-agent-workflow-rag/07-multi-agent-orchestration.md", "state": "off", "why": "미선택 — 단일 에이전트. 오케스트레이터-워커는 워크플로우 패턴이지 멀티 에이전트가 아님(3/07 '순서가 고정이면 체이닝')", "trend": false}, "r-11": {"t": "결정 레이어 (System One)", "i": "3/11", "href": "03-agent-workflow-rag/11-decision-layer.md", "trend": true, "state": "on", "why": "decide() 뒤 판정 4곳: intent · 의도→UI 선택 · 다음 행동 · 승인 필요 여부. 결정 모델은 섀도 → 한국어 골든셋 통과 후 지점별 교체"}, "r-08": {"t": "상태·메모리·컨텍스트", "i": "3/08", "href": "03-agent-workflow-rag/08-state-memory-context.md", "state": "on", "why": "구조화 상태(슬롯·후보·장바구니) + 체크포인팅 + 툴 출력 외부화. 로그인 고객 선호는 항목 제한 메모리(no-memory 대비 [실측])", "trend": false}, "k-01": {"t": "수집·파싱", "i": "2/01", "href": "02-data-pipeline/01-source-ingestion.md", "state": "on", "why": "상품·가격·재고·주문은 CDC, 리뷰·FAQ는 배치, 상품 이미지는 VLM 캡션('생성됨', 등급 C)", "trend": false}, "k-02": {"t": "청킹", "i": "2/02", "href": "02-data-pipeline/02-chunking-strategies.md", "state": "part", "why": "레코드는 템플릿 직렬화(청킹 최소). 리뷰·상세 설명·정책 문서만 구조 기반 + parent-child", "trend": false}, "k-03": {"t": "메타데이터·출처", "i": "2/03", "href": "02-data-pipeline/03-metadata-provenance.md", "state": "on", "why": "다섯 축 + 별도 저장소, 가격·재고는 bitemporal 필수, 캡션·요약은 PROV derived_from", "trend": false}, "k-04": {"t": "임베딩·인덱싱", "i": "2/04", "href": "02-data-pipeline/04-embedding-indexing.md", "state": "on", "why": "hybrid, 상품 코드·브랜드·모델명은 BM25 비중↑ + 형태소, 기존 검색엔진 재사용. 전용 벡터DB는 규모 10배 시", "trend": false}, "k-05": {"t": "지식그래프 구축", "i": "2/05", "href": "02-data-pipeline/05-knowledge-graph-construction.md", "state": "on", "why": "규칙 추출 중심 그래프(상품–카테고리–브랜드–호환–대체–옵션). LLM은 리뷰 속 속성만 + 근거 문장 + SHACL 등가", "trend": false}, "k-06": {"t": "온톨로지 모델링", "i": "2/06", "href": "02-data-pipeline/06-ontology-driven-modeling.md", "trend": true, "state": "on", "why": "상품 온톨로지: schema.org Product/Offer 부분 재사용 + 카테고리 택소노미 + 호환·대체·옵션. 매핑 테이블에 컴포넌트 열·결정 모델 enum 열"}, "k-08": {"t": "근거 데이터 설계 ★ (계약 ①)", "i": "2/08", "href": "02-data-pipeline/08-grounding-data-design.md", "state": "on", "why": "레코드 근거 단위 + 리뷰 문장 + 호환 경로. 가격 상충은 유효 시점. 캡션은 등급 C, 검증 근거 불허 — 계약 ①", "trend": false}, "k-07": {"t": "신선도·동기화", "i": "2/07", "href": "02-data-pipeline/07-freshness-and-sync.md", "state": "on", "why": "CDC 이벤트 + 단일 변경 큐, 재고·가격 톰스톤 즉시, 같은 이벤트가 인덱스·그래프 모두 트리거. 리뷰는 증분 배치", "trend": false}, "k-10": {"t": "접근 제어·PII", "i": "2/10", "href": "02-data-pipeline/10-access-control-governance.md", "state": "on", "why": "단일 테넌트지만 테넌트 분리 가능한 구조, 주문·장바구니는 본인 세션 사전 필터, 리뷰 작성자 PII 수집 직후 마스킹", "trend": false}, "k-09": {"t": "파이프라인 내부의 AI", "i": "2/09", "href": "02-data-pipeline/09-ai-inside-the-pipeline.md", "trend": true, "state": "on", "why": "속성 정규화·카테고리 분류: 규칙 → 소형 분류기(대량이면 결정 모델 비교). 리뷰 감성·요약: LLM(샘플링·상한) + 검증기"}, "c-01": {"t": "보안·인젝션", "i": "5/01", "href": "05-cross-cutting/01-security-prompt-injection.md", "state": "on", "why": "리뷰·외부 데이터는 신뢰 경계 밖 → 읽은 뒤 쓰기·전송 툴 등급 상향, 행동 직전 규칙 게이트, 외부 URL 출력 차단", "trend": false}, "c-02": {"t": "비용·지연·라우팅", "i": "5/02", "href": "05-cross-cutting/02-cost-latency-model-routing.md", "trend": true, "state": "on", "why": "판정(intent·UI·승인)이 비용의 큰 몫이면 규칙 → 결정 모델 → 분류기. 시맨틱 캐시 키에 가격 유효 시점 포함"}, "c-03": {"t": "관측성·트레이싱", "i": "5/03", "href": "05-cross-cutting/03-observability-tracing.md", "state": "on", "why": "프론트 trace_id 전파 + ui_render/ui_event 스팬을 백엔드와 같은 곳에, 매핑 판정·게이트 결과·멱등 키를 속성에", "trend": false}, "c-04": {"t": "거버넌스·감사", "i": "5/04", "href": "05-cross-cutting/04-governance-explainability.md", "trend": true, "state": "on", "why": "장바구니·환불 승인 이벤트(as_shown_hash) + 게이트 규칙 ID + 확신도를 같은 감사 레코드로. '왜 추천'은 온톨로지 경로"}, "c-05": {"t": "LLMOps / AgentOps", "i": "5/05", "href": "05-cross-cutting/05-llmops-agentops.md", "state": "on", "why": "릴리스 번들(프롬프트·레지스트리·온톨로지·매핑·질문 정의), 레지스트리 ↔ export 호환 검증기, 카나리 5%, 쓰기 툴 모의 섀도", "trend": false}};      // id → {t, i, href, trend, state, why}
+const EXTERNALS = [{"id": "ext-pay", "t": "결제 페이지(외부 결제 대행) — 에이전트 밖", "x": 640, "w": 330, "state": "off", "href": "03-agent-workflow-rag/09-tools-and-mcp.md", "why": "의도적으로 뺀 범위 — 결제는 비가역·금전·외부 전송 등급이고 결제 대행이 본인 인증·규제 준수를 맡음. 장바구니까지만 에이전트가 담당하고 결제는 링크 핸드오프"}];
+const STEPS = [{"n": 1, "nodes": ["ui-07", "r-08"], "from": "user", "label": "입력 수신 · 선호 메모리 로드"}, {"n": 2, "nodes": ["r-02", "r-11", "r-12"], "label": "입력 가드레일 · intent=compare · 슬롯 추출"}, {"n": 3, "nodes": ["r-03", "r-06", "k-06", "k-05", "k-08"], "label": "온톨로지 필터 → 변환기 쿼리 → 호환 그래프 1홉 → 리뷰 hybrid → 근거 단위(계약 ①)"}, {"n": 4, "nodes": ["r-10"], "label": "규칙 게이트(재고·유효 가격·정책·호환·후보 수)"}, {"n": 5, "nodes": ["r-04"], "label": "구조화 생성, 가격·재고는 레코드 바인딩"}, {"n": 6, "nodes": ["ui-05"], "label": "ui_intent 판정: 규칙 → 온톨로지 → LLM(결정 모델 섀도) = CompareTable"}, {"n": 7, "nodes": ["ui-02", "ui-03"], "label": "렌더 가능한 응답(계약 ②), AG-UI 이벤트"}, {"n": 8, "nodes": ["ui-08", "ui-01", "ui-07"], "label": "트리 검증 → Declarative 비교표 렌더(폴백: 요약 카드)"}, {"n": 9, "nodes": ["ui-04"], "label": "옵션 선택·담기 요청 이벤트(계약 ③, as_shown_hash)"}, {"n": 10, "nodes": ["r-12", "r-10", "ui-06"], "label": "정책 엔진 → 재고·가격 재확인 게이트 ∧ 승인 필요 판정 → 승인 카드"}, {"n": 11, "nodes": ["r-09", "ext-pay"], "label": "승인 → 장바구니 툴(멱등 키) → '전송됨' → 결제는 외부 핸드오프"}, {"n": 12, "nodes": ["c-03", "c-04"], "label": "트레이스 · 감사 레코드"}];
+const CROSS_ORDER = ["c-01", "c-02", "c-03", "c-04", "c-05"];
+
+// ---- 렌더 ----
+const svg = document.getElementById("arch");
+const NS = "http://www.w3.org/2000/svg";
+const tip = document.getElementById("tip");
+const LX = 40, LW = 980;
+const KB = LAYOUT.knowledge.y + 50 + LAYOUT.knowledge.rows.length * 56 + (LAYOUT.knowledge.rows.length - 1) * 10 + 14; // Knowledge 레이어 하단
+const CROSS = { x: 1040, y: 90, w: 160, h: KB - 90 };
+const STATE_LABEL = { on: "선택", part: "부분 선택", off: "미선택" };
+const rects = {};   // id → {x,y,w,h}
+const badges = {};  // id → [n,...]
+STEPS.forEach(s => s.nodes.forEach(id => { (badges[id] = badges[id] || []).push(s.n); }));
+
+function el(name, attrs, parent) {
+  const e = document.createElementNS(NS, name);
+  for (const k in attrs) e.setAttribute(k, attrs[k]);
+  (parent || svg).appendChild(e);
+  return e;
+}
+function text(x, y, str, cls, parent, anchor) {
+  const t = el("text", { x, y, class: cls || "", "text-anchor": anchor || "start" }, parent);
+  t.textContent = str; return t;
+}
+function wrapText(x, y, str, maxChars, g, lineH, maxLines) {
+  const words = str.split(" "); const lines = []; let cur = "";
+  for (const w of words) {
+    if ((cur + " " + w).trim().length > maxChars && cur) { lines.push(cur); cur = w; } else { cur = (cur + " " + w).trim(); }
+  }
+  if (cur) lines.push(cur);
+  const shown = lines.slice(0, maxLines || 3);
+  if (lines.length > shown.length) shown[shown.length - 1] += "…";
+  shown.forEach((ln, k) => text(x, y + k * (lineH || 14), ln, "", g));
+  return shown.length;
+}
+function showTip(e, title, body, href) {
+  tip.innerHTML = "";
+  const b = document.createElement("b"); b.textContent = title; tip.appendChild(b);
+  tip.appendChild(document.createTextNode(body));
+  if (href) { const p = document.createElement("span"); p.className = "path"; p.textContent = "→ " + href; tip.appendChild(p); }
+  const w = Math.min(360, window.innerWidth - 24);
+  tip.style.left = Math.min(e.clientX + 12, window.innerWidth - w - 12) + "px";
+  tip.style.top = (e.clientY + 12) + "px";
+  tip.style.opacity = 1;
+}
+function node(id, x, y, w, h, color, parent) {
+  const n = NODES[id];
+  const g = el("g", { class: "node " + (n.state || "on") + (n.trend ? " trend" : ""), tabindex: "0", role: "link", "aria-label": n.i + " " + n.t + " — " + STATE_LABEL[n.state || "on"] }, parent);
+  el("rect", { x, y, width: w, height: h, stroke: n.trend ? "var(--trend)" : color }, g);
+  if (n.i) text(x + 8, y + 13, n.i, "idx", g);
+  wrapText(x + 8, y + 30, n.t, Math.max(8, Math.floor(w / 11.5)), g, 14, 2);
+  rects[id] = { x, y, w, h };
+  const go = () => { window.location.href = BASE + n.href; };
+  g.addEventListener("click", go);
+  g.addEventListener("keydown", e => { if (e.key === "Enter") go(); });
+  g.addEventListener("mousemove", e => showTip(e, "[" + STATE_LABEL[n.state || "on"] + "] " + n.i + " " + n.t, n.why, n.href));
+  g.addEventListener("mouseleave", () => tip.style.opacity = 0);
+  return g;
+}
+function badgeRow(id) {
+  const r = rects[id], nums = badges[id]; if (!r || !nums) return;
+  nums.forEach((n, k) => {
+    const g = el("g", { class: "badge" });
+    const cx = r.x + r.w - 10 - k * 20, cy = r.y + 11;
+    el("circle", { cx, cy, r: 8.5 }, g);
+    text(cx, cy + 3.5, String(n), "", g, "middle");
+  });
+}
+function layer(id, L) {
+  const g = el("g", { id });
+  const rows = L.rows.length, rowH = 56, top = L.y + 50;
+  const h = 50 + rows * rowH + (rows - 1) * 10 + 14;
+  el("rect", { x: LX, y: L.y, width: LW, height: h, class: "layer-bg", rx: 10 }, g);
+  el("rect", { x: LX, y: L.y, width: 6, height: h, fill: L.color, rx: 3 }, g);
+  text(LX + 18, L.y + 22, L.label, "layer-label", g).setAttribute("fill", L.color);
+  text(LX + 18, L.y + 38, L.sub, "layer-sub", g);
+  const gap = 10, pad = 18;
+  L.rows.forEach((row, ri) => {
+    const w = (LW - pad * 2 - gap * (row.length - 1)) / row.length;
+    row.forEach((nid, k) => node(nid, LX + pad + k * (w + gap), top + ri * (rowH + 10), w, rowH, L.color, g));
+  });
+  return g;
+}
+Object.keys(LAYOUT).forEach(k => layer(k, LAYOUT[k]));
+
+// 횡단 관심사 세로 바
+(function () {
+  const g = el("g", { id: "cross" });
+  el("rect", { x: CROSS.x, y: CROSS.y, width: CROSS.w, height: CROSS.h, class: "layer-bg", rx: 10 }, g);
+  el("rect", { x: CROSS.x, y: CROSS.y, width: CROSS.w, height: 6, fill: "var(--cross)", rx: 3 }, g);
+  text(CROSS.x + 12, CROSS.y + 28, "Cross-cutting", "layer-label", g).setAttribute("fill", "var(--cross)");
+  text(CROSS.x + 12, CROSS.y + 46, "Part 5 · 횡단 관심사", "layer-sub", g);
+  const gap = 12, w = CROSS.w - 24, h = (CROSS.h - 64 - 12 - gap * (CROSS_ORDER.length - 1)) / CROSS_ORDER.length;
+  CROSS_ORDER.forEach((nid, k) => node(nid, CROSS.x + 12, CROSS.y + 64 + k * (h + gap), w, h, "var(--cross)", g));
+})();
+
+// 사용자 + 외부 노드 (레이어 위쪽)
+(function () {
+  const g = el("g", { id: "user", class: "ext" });
+  el("circle", { cx: LX + 20, cy: 26, r: 10, fill: "none", stroke: "currentColor", "stroke-width": 1.5 }, g);
+  el("path", { d: `M${LX + 2},58 a18,18 0 0 1 36,0`, fill: "none", stroke: "currentColor", "stroke-width": 1.5 }, g);
+  text(LX + 52, 44, "사용자", "", g);
+  rects["user"] = { x: LX, y: 14, w: 100, h: 46 };
+  EXTERNALS.forEach(ex => {
+    const eg = el("g", { class: "ext node " + (ex.state || "on"), tabindex: "0", role: "link" });
+    el("rect", { x: ex.x, y: 18, width: ex.w, height: 40 }, eg);
+    text(ex.x + 12, 43, ex.t, "", eg);
+    rects[ex.id] = { x: ex.x, y: 18, w: ex.w, h: 40 };
+    eg.addEventListener("click", () => { window.location.href = BASE + ex.href; });
+    eg.addEventListener("mousemove", e => showTip(e, "[" + STATE_LABEL[ex.state || "on"] + "] " + ex.t, ex.why, ex.href));
+    eg.addEventListener("mouseleave", () => tip.style.opacity = 0);
+  });
+})();
+
+// 레이어 간 계약 화살표 (점선)
+function contract(x1, y1, x2, y2, label, lx, ly) {
+  el("path", { d: `M${x1},${y1} L${x2},${y2}`, class: "flow-contract" });
+  const g = el("g", {}); const tw = label.length * 6.4 + 16;
+  el("rect", { x: lx - tw / 2, y: ly - 11, width: tw, height: 20, class: "contract" }, g);
+  text(lx, ly + 3, label, "contract-text", g, "middle");
+}
+(function () {
+  const iy = LAYOUT.interaction.y, ry = LAYOUT.reasoning.y, ky = LAYOUT.knowledge.y;
+  const ih = 50 + 2 * 56 + 10 + 14, rh = ih;
+  contract(300, iy + ih, 300, ry, "③ 사용자 이벤트 → 상태 머신", 300, (iy + ih + ry) / 2);
+  contract(760, ry, 760, iy + ih, "② 렌더 가능한 응답(텍스트 + citations + ui_intent)", 760, (iy + ih + ry) / 2);
+  contract(520, ky, 520, ry + rh, "① 근거 단위(evidence) 스키마 + 접근 정책", 520, (ky + ry + rh) / 2);
+})();
+
+// 번호 매긴 흐름 화살표: 연속 단계의 첫 노드 사이를 잇고, 중간에 번호 배지
+function anchor(r, toward) {
+  const cx = r.x + r.w / 2, cy = r.y + r.h / 2;
+  const dx = toward.x + toward.w / 2 - cx, dy = toward.y + toward.h / 2 - cy;
+  if (Math.abs(dy) > r.h / 2 + 4 && Math.abs(dy) >= Math.abs(dx) * 0.6) return { x: cx, y: dy > 0 ? r.y + r.h : r.y, v: true };
+  return { x: dx > 0 ? r.x + r.w : r.x, y: cy, v: false };
+}
+function flowArrow(fromId, toId, n, k) {
+  const a = rects[fromId], b = rects[toId]; if (!a || !b) return;
+  const p = anchor(a, b), q = anchor(b, a);
+  const off = ((k % 3) - 1) * 14;
+  let d;
+  if (p.v && q.v) { const my = (p.y + q.y) / 2; d = `M${p.x + off},${p.y} C${p.x + off},${my} ${q.x + off},${my} ${q.x + off},${q.y}`; }
+  else if (!p.v && !q.v) { const mx = (p.x + q.x) / 2; d = `M${p.x},${p.y + off} C${mx},${p.y + off} ${mx},${q.y + off} ${q.x},${q.y + off}`; }
+  else { d = `M${p.x},${p.y} Q${p.v ? p.x : q.x},${p.v ? q.y : p.y} ${q.x},${q.y}`; }
+  const path = el("path", { d, class: "flow", style: "color: var(--fg)" });
+  const L = path.getTotalLength ? path.getTotalLength() : 0;
+  const m = L ? path.getPointAtLength(L * 0.5) : { x: (p.x + q.x) / 2, y: (p.y + q.y) / 2 };
+  const g = el("g", { class: "badge" });
+  el("circle", { cx: m.x, cy: m.y, r: 9 }, g);
+  text(m.x, m.y + 3.5, String(n), "", g, "middle");
+}
+(function () {
+  let prev = null;
+  STEPS.forEach((s, k) => {
+    const from = s.from || (prev ? prev.nodes[0] : null);
+    if (from && from !== s.nodes[0]) flowArrow(from, s.nodes[0], s.n, k);
+    prev = s;
+  });
+  Object.keys(badges).forEach(badgeRow);
+})();
+
+// 흐름 설명 목록
+(function () {
+  const box = document.getElementById("steps");
+  const ol = document.createElement("ol");
+  STEPS.forEach(s => {
+    const li = document.createElement("li");
+    li.textContent = s.label + " ";
+    const sp = document.createElement("span");
+    sp.textContent = "(" + s.nodes.map(id => (NODES[id] ? NODES[id].i : id)).join(" · ") + ")";
+    li.appendChild(sp); ol.appendChild(li);
+  });
+  box.appendChild(ol);
+})();
+</script>
+</body>
+</html>

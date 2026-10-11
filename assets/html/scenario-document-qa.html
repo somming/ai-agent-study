@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>시나리오 A: 사내 문서 QA 어시스턴트 — 전체 아키텍처</title>
+<style>
+  /* 레이어 색상은 작성 가이드 7절·reference-architecture.html과 동일하게 고정 */
+  :root {
+    --bg: #fafaf8; --fg: #1d1d1b; --muted: #6b6b6b; --line: #d9d9d4; --card: #ffffff;
+    --knowledge: #2E7D6B; --reasoning: #3A5FA8; --interaction: #B5651D; --cross: #6B6B6B;
+    --trend: #8E44AD;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #15161a; --fg: #ececea; --muted: #9a9a95; --line: #33353b; --card: #1e2026; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.5 -apple-system, "Pretendard", "Noto Sans KR", system-ui, sans-serif; }
+  header { padding: 20px 28px 8px; }
+  header h1 { margin: 0 0 4px; font-size: 20px; font-weight: 650; }
+  header p { margin: 0; color: var(--muted); }
+  header .query { margin-top: 6px; color: var(--fg); font-size: 13px; }
+  .legend { display: flex; gap: 16px; flex-wrap: wrap; padding: 8px 28px 0; color: var(--muted); font-size: 12px; align-items: center; }
+  .legend span::before { content: ""; display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: -1px; background: var(--c); }
+  .legend span.sw-part::before { background: var(--c); opacity: .6; }
+  .legend span.sw-off::before { background: var(--c); opacity: .25; }
+  .legend span.sw-trend::before { background: transparent; border: 2px dashed var(--trend); width: 8px; height: 8px; }
+  .legend span.sw-step::before { background: var(--fg); border-radius: 50%; }
+  .wrap { padding: 12px 28px 20px; }
+  svg { width: 100%; height: auto; display: block; }
+  .layer-bg { fill: var(--card); stroke: var(--line); }
+  .layer-label { font-size: 13px; font-weight: 700; letter-spacing: .02em; }
+  .layer-sub { font-size: 11px; fill: var(--muted); }
+  .node { cursor: pointer; }
+  .node rect { fill: var(--card); stroke-width: 1.5; rx: 6; }
+  .node text { font-size: 11.5px; fill: var(--fg); pointer-events: none; }
+  .node .idx { font-size: 10px; fill: var(--muted); }
+  .node:hover rect, .node:focus rect { filter: brightness(0.96); stroke-width: 2.5; }
+  .node.trend rect { stroke-dasharray: 4 3; }
+  .node.on rect { stroke-width: 2.2; }
+  .node.part { opacity: .72; }
+  .node.off { opacity: .3; }
+  .node.off rect { stroke-dasharray: 2 3; }
+  .node:focus { outline: none; }
+  .badge circle { fill: var(--fg); }
+  .badge text { fill: var(--bg); font-size: 10px; font-weight: 700; pointer-events: none; }
+  .flow { stroke: var(--fg); stroke-width: 1.6; fill: none; marker-end: url(#arrow); opacity: .75; }
+  .flow-contract { stroke: var(--muted); stroke-width: 1.2; fill: none; stroke-dasharray: 5 4; marker-end: url(#arrow-muted); }
+  .contract { fill: var(--bg); stroke: var(--line); rx: 4; }
+  .contract-text { font-size: 11px; fill: var(--fg); }
+  .ext rect { fill: var(--bg); stroke: var(--muted); stroke-width: 1.5; rx: 6; }
+  .ext text { font-size: 12px; fill: var(--fg); }
+  #tip { position: fixed; pointer-events: none; background: var(--fg); color: var(--bg); padding: 7px 10px; border-radius: 6px; font-size: 12px; line-height: 1.4; max-width: 360px; opacity: 0; transition: opacity .1s; z-index: 10; }
+  #tip b { display: block; margin-bottom: 2px; }
+  #tip .path { opacity: .7; display: block; margin-top: 3px; font-size: 11px; }
+  .steps { padding: 0 28px 16px; font-size: 12.5px; color: var(--fg); columns: 2; column-gap: 32px; }
+  .steps ol { margin: 0; padding-left: 20px; }
+  .steps li { margin: 0 0 3px; break-inside: avoid; }
+  .steps li span { color: var(--muted); }
+  footer { padding: 0 28px 24px; color: var(--muted); font-size: 12px; }
+  footer a { color: inherit; }
+  @media (max-width: 800px) { .steps { columns: 1; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>시나리오 A: 사내 문서 QA 어시스턴트 — 전체 아키텍처</h1>
+  <p>Knowledge 중심 · 워크플로우형 RAG · Controlled citation 렌더. 진한 노드만 이 시나리오가 선택한 단계이고, 흐린 노드는 뺀 단계입니다. 번호는 시나리오 페이지 4절의 질의 흐름과 같습니다. 노드 호버 시 선택 이유 한 줄, 클릭 시 근거 페이지로 이동합니다.</p>
+  <p class="query">흐름 예시 질의: “출장비 정산 기한이 며칠인가요? 작년 규정과 달라졌나요?”</p>
+</header>
+<div class="legend">
+  <span style="--c: var(--interaction)">Interaction</span>
+  <span style="--c: var(--reasoning)">Reasoning / Action</span>
+  <span style="--c: var(--knowledge)">Knowledge</span>
+  <span style="--c: var(--cross)">Cross-cutting</span>
+  <span class="sw-trend">트렌드 세 축(온톨로지 · 뉴로심볼릭 · 결정 모델)</span>
+  <span style="--c: var(--fg)">선택</span>
+  <span class="sw-part" style="--c: var(--fg)">부분 선택</span>
+  <span class="sw-off" style="--c: var(--fg)">미선택(흐림)</span>
+  <span class="sw-step" style="--c: var(--fg)">번호 = 4절 질의 흐름 단계</span>
+</div>
+<div class="wrap">
+<svg id="arch" viewBox="0 0 1240 740" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="시나리오 A: 사내 문서 QA 어시스턴트 — 전체 아키텍처">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="currentColor"/>
+    </marker>
+    <marker id="arrow-muted" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#6b6b6b"/>
+    </marker>
+  </defs>
+</svg>
+</div>
+<div class="steps" id="steps"></div>
+<div id="tip"></div>
+<footer>
+  트렌드 축: 온톨로지는 택소노미 수준(2/06 부분) · 뉴로심볼릭은 근거-답변 정합성 검증(3/10·3/04) · 결정 모델은 라우팅·문서 분류 섀도 모드(3/11·2/09·3/02). 평가·프레임워크(3/13·3/14)는 그림 밖. 상세는 <a href="../../07-appendix-scenarios/01-enterprise-document-qa.md">시나리오 페이지</a>, 3-Layer 원형은 <a href="reference-architecture.html">레퍼런스 아키텍처</a>, 계약 ①②③은 <a href="../../00-overview/01-reference-architecture.md">01 레퍼런스 아키텍처</a>.
+</footer>
+
+<script>
+// ---- 데이터 (링크는 assets/html/ 기준 상대 경로) ----
+const BASE = "../../";
+const LAYOUT = {"interaction": {"label": "Interaction", "sub": "Part 4 · 동적 UI 연동", "y": 90, "color": "var(--interaction)", "rows": [["ui-01", "ui-02", "ui-03", "ui-05", "ui-04", "ui-06"], ["ui-07", "ui-08", "ui-09", "ui-10", "ui-x"]]}, "reasoning": {"label": "Reasoning / Action", "sub": "Part 3 · Agent 워크플로우 · LLM/RAG", "y": 310, "color": "var(--reasoning)", "rows": [["r-02", "r-03", "r-04", "r-10", "r-09", "r-12"], ["r-05", "r-01", "r-06", "r-07", "r-11", "r-08"]]}, "knowledge": {"label": "Knowledge", "sub": "Part 2 · 데이터 파이프라인 · 근거 데이터", "y": 530, "color": "var(--knowledge)", "rows": [["k-01", "k-02", "k-03", "k-04", "k-05", "k-06"], ["k-08", "k-07", "k-10", "k-09"]]}};
+const NODES = {"ui-01": {"t": "GenUI 패턴", "i": "4/01", "href": "04-dynamic-ui/01-generative-ui-spectrum.md", "state": "part", "why": "Controlled — 사용자가 읽기만 하므로 통제 수준 결정을 사실상 생략 (4/01 '읽기만 한다면 citation 렌더만')", "trend": false}, "ui-02": {"t": "프로토콜(전송층)", "i": "4/02", "href": "04-dynamic-ui/02-protocols-ag-ui-a2ui-mcp-apps.md", "state": "part", "why": "프레임워크 내장 스트리밍(SSE). 풀스택 단일 팀·웹만이라 AG-UI 추상화 비용을 낼 이유가 없음", "trend": false}, "ui-03": {"t": "컴포넌트 레지스트리", "i": "4/03", "href": "04-dynamic-ui/03-component-registry-schema.md", "state": "on", "why": "레지스트리 4개(CitationList·EvidenceHighlight·FeedbackBar·OptionChips). bindings는 2/08 근거 단위 — 계약 ②", "trend": false}, "ui-05": {"t": "의도 → UI 매핑", "i": "4/05", "href": "04-dynamic-ui/05-intent-to-ui-mapping.md", "trend": true, "state": "part", "why": "규칙만: citations 있음 → CitationList, 확신도 낮음 → OptionChips. 선택지가 2~3개라 결정 모델 불필요"}, "ui-04": {"t": "스트리밍·상태 동기화", "i": "4/04", "href": "04-dynamic-ui/04-streaming-state-sync.md", "state": "part", "why": "SSE + 스냅샷(상태가 작음), 피드백은 POST — 계약 ③", "trend": false}, "ui-06": {"t": "HITL UI", "i": "4/06", "href": "04-dynamic-ui/06-hitl-ui-patterns.md", "state": "on", "why": "citation 렌더(출처·개정판·유효 시점·등급·하이라이트·권한 밖 건수) + 피드백 캡처. 승인 카드 없음", "trend": false}, "ui-07": {"t": "프론트엔드 렌더러", "i": "4/07", "href": "04-dynamic-ui/07-frontend-integration.md", "state": "on", "why": "React 클라이언트 레지스트리 + 이벤트 어댑터, 사내 포털 위젯 임베딩(자사 코드)", "trend": false}, "ui-08": {"t": "보안·샌드박싱", "i": "4/08", "href": "04-dynamic-ui/08-security-sandboxing.md", "state": "part", "why": "props 스키마 + 서버 재검증 + 출처 태그. 코드 실행이 없어 샌드박스 불필요", "trend": false}, "ui-09": {"t": "UX·접근성", "i": "4/09", "href": "04-dynamic-ui/09-ux-accessibility.md", "state": "part", "why": "텍스트 우선, 라이브 영역 요약, 근거 없는 문장 표시", "trend": false}, "ui-10": {"t": "GenUI 평가", "i": "4/10", "href": "04-dynamic-ui/10-evaluation-genui.md", "state": "part", "why": "citation 정확도·피드백 이유 분포·권한 밖 근거 비율. UI 선택이 결정론이라 선택 정확도는 측정 안 함", "trend": false}, "ui-x": {"t": "A2UI · MCP Apps(네이티브·서드파티 UI)", "i": "4/02", "href": "04-dynamic-ui/02-protocols-ag-ui-a2ui-mcp-apps.md", "state": "off", "why": "미선택 — 네이티브·서드파티 UI 요구 없음", "trend": false}, "r-02": {"t": "질의 이해·라우팅", "i": "3/02", "href": "03-agent-workflow-rag/02-query-understanding.md", "state": "on", "why": "한국어 정규화 → 규칙 → 소형 분류기 라우터(FAQ/문서 QA/범위 밖), 결정 모델은 섀도. 멀티턴 재작성", "trend": false}, "r-03": {"t": "검색·리랭킹", "i": "3/03", "href": "03-agent-workflow-rag/03-retrieval-reranking.md", "state": "on", "why": "ACL 사전 필터 → BM25 + dense → RRF → cross-encoder → 컷오프 → parent 확장", "trend": false}, "r-04": {"t": "생성·근거 강제", "i": "3/04", "href": "03-agent-workflow-rag/04-generation-grounding.md", "state": "on", "why": "구조화 출력(문장별 evidence_id) + citation 존재·권한 규칙 검증 + abstain. NLI는 faithfulness 측정 후", "trend": false}, "r-10": {"t": "뉴로심볼릭 검증", "i": "3/10", "href": "03-agent-workflow-rag/10-neuro-symbolic-reasoning.md", "trend": true, "state": "on", "why": "규칙 게이트(citation 존재·권한·개정 상충·숫자 일치) + NLI 함의 판정, 재생성 상한 2회 → abstain"}, "r-09": {"t": "툴 / MCP", "i": "3/09", "href": "03-agent-workflow-rag/09-tools-and-mcp.md", "state": "part", "why": "네이티브 함수 2개(검색·메타 조회), 읽기 전용. 소비자가 하나라 MCP 불필요", "trend": false}, "r-12": {"t": "가드레일·HITL", "i": "3/12", "href": "03-agent-workflow-rag/12-guardrails-hitl.md", "state": "part", "why": "입출력 가드레일 + 사후 층화 샘플링. 행동이 없어 승인 흐름(HITL) 없음", "trend": false}, "r-05": {"t": "워크플로우 vs 에이전트", "i": "3/05", "href": "03-agent-workflow-rag/05-workflow-vs-agent.md", "state": "on", "why": "라우팅 워크플로우(세 경로, 고정 체인). 경로를 종이에 그릴 수 있고 지연 SLA 수 초", "trend": false}, "r-01": {"t": "RAG 패턴", "i": "3/01", "href": "03-agent-workflow-rag/01-rag-architecture-patterns.md", "state": "on", "why": "Advanced RAG(hybrid + 리랭킹). 단일 문서 사실 조회가 대부분이라 GraphRAG 불필요", "trend": false}, "r-06": {"t": "에이전트 패턴", "i": "3/06", "href": "03-agent-workflow-rag/06-agent-design-patterns.md", "state": "part", "why": "Router + Tool-use(검색 1회), 루프 없음", "trend": false}, "r-07": {"t": "멀티 에이전트 오케스트레이션", "i": "3/07", "href": "03-agent-workflow-rag/07-multi-agent-orchestration.md", "state": "off", "why": "미선택 — 단일 에이전트. 컨텍스트·역할 한계가 측정되지 않음(3/07)", "trend": false}, "r-11": {"t": "결정 레이어 (System One)", "i": "3/11", "href": "03-agent-workflow-rag/11-decision-layer.md", "trend": true, "state": "part", "why": "decide() 인터페이스·트레이스 먼저. 라우팅·청크 필터·품질 게이트는 규칙+분류기, 결정 모델은 섀도 모드"}, "r-08": {"t": "상태·메모리·컨텍스트", "i": "3/08", "href": "03-agent-workflow-rag/08-state-memory-context.md", "state": "part", "why": "구조화 상태(세션 내) + no-memory, 툴 출력 외부화. 체크포인팅은 불필요(HITL 대기 없음)", "trend": false}, "k-01": {"t": "수집·파싱", "i": "2/01", "href": "02-data-pipeline/01-source-ingestion.md", "state": "on", "why": "직접 커넥터(문서 저장소·위키·그룹웨어) + Docling 류 레이아웃 파서 + 실패분 격리 큐", "trend": false}, "k-02": {"t": "청킹", "i": "2/02", "href": "02-data-pipeline/02-chunking-strategies.md", "state": "on", "why": "문서 구조 기반 + 재귀 보정 + parent-child. 맥락 보강 없음(출처 혼동 측정 시 contextual)", "trend": false}, "k-03": {"t": "메타데이터·출처", "i": "2/03", "href": "02-data-pipeline/03-metadata-provenance.md", "state": "on", "why": "다섯 축 + 별도 저장소 + 불변 버전 + PROV. 규정·계약은 bitemporal, superseded_by", "trend": false}, "k-04": {"t": "임베딩·인덱싱", "i": "2/04", "href": "02-data-pipeline/04-embedding-indexing.md", "state": "on", "why": "hybrid(BM25 + dense + RRF), 형태소 분석기, pgvector 류(기존 PostgreSQL), 임베딩 2종 [실측]", "trend": false}, "k-05": {"t": "지식그래프 구축", "i": "2/05", "href": "02-data-pipeline/05-knowledge-graph-construction.md", "state": "off", "why": "미선택 — 멀티홉·동일성 요구가 질의 로그에서 미측정. 확인되면 경량 그래프 검토(2/05)", "trend": false}, "k-06": {"t": "온톨로지 모델링", "i": "2/06", "href": "02-data-pipeline/06-ontology-driven-modeling.md", "trend": true, "state": "part", "why": "택소노미(SKOS)만: 문서 유형·부서·기밀 등급·주제. 정식 온톨로지는 보류(그래프 없음, RDF 경험 없음)"}, "k-08": {"t": "근거 데이터 설계 ★ (계약 ①)", "i": "2/08", "href": "02-data-pipeline/08-grounding-data-design.md", "state": "on", "why": "하이브리드(청크 검색 + 문장 하이라이트), 코드 규칙 신뢰도, 개정 상충은 유효 시점으로 — 계약 ①", "trend": false}, "k-07": {"t": "신선도·동기화", "i": "2/07", "href": "02-data-pipeline/07-freshness-and-sync.md", "state": "on", "why": "증분 배치(시간 단위) + 톰스톤 + 주 1회 전체 대조 + 정확 중복 제거 + 블루/그린", "trend": false}, "k-10": {"t": "접근 제어·PII", "i": "2/10", "href": "02-data-pipeline/10-access-control-governance.md", "state": "on", "why": "메타데이터 사전 필터(그룹 평탄화 ACL + 기밀 등급) + 렌더 전 재확인 + 메일 PII 수집 직후 마스킹 + fail-closed", "trend": false}, "k-09": {"t": "파이프라인 내부의 AI", "i": "2/09", "href": "02-data-pipeline/09-ai-inside-the-pipeline.md", "trend": true, "state": "part", "why": "문서 유형·기밀 등급: 규칙 → 한국어 소형 분류기. 효력일 추출: 규칙 + 소형 LLM. 결정 모델은 섀도 비교군"}, "c-01": {"t": "보안·인젝션", "i": "5/01", "href": "05-cross-cutting/01-security-prompt-injection.md", "state": "part", "why": "출력 필터(외부 URL·PII) + 데이터 표기. 읽기 전용이라 피해 경로가 유출뿐", "trend": false}, "c-02": {"t": "비용·지연·라우팅", "i": "5/02", "href": "05-cross-cutting/02-cost-latency-model-routing.md", "trend": true, "state": "on", "why": "계측·상한부터 → 2주 실측. 시맨틱 캐시는 권한별 답이라 캐시 키에 권한 범위 또는 포기"}, "c-03": {"t": "관측성·트레이싱", "i": "5/03", "href": "05-cross-cutting/03-observability-tracing.md", "state": "on", "why": "벤더 SDK + OTel 익스포트, evidence_id·경로·검증 결과를 첫날부터 스팬 속성에", "trend": false}, "c-04": {"t": "거버넌스·감사", "i": "5/04", "href": "05-cross-cutting/04-governance-explainability.md", "trend": true, "state": "part", "why": "트레이스 부분집합 불변 저장 + citation·확신도 기록 + '권한 밖 근거 0건' 감사 리포트. 승인 기록은 해당 없음"}, "c-05": {"t": "LLMOps / AgentOps", "i": "5/05", "href": "05-cross-cutting/05-llmops-agentops.md", "state": "on", "why": "번들 매니페스트(임베딩·청킹·프롬프트·분류기 버전), 골든셋 회귀 게이트, 인덱스 블루/그린", "trend": false}};      // id → {t, i, href, trend, state, why}
+const EXTERNALS = [];
+const STEPS = [{"n": 1, "nodes": ["ui-07"], "from": "user", "label": "질문 입력 · 그룹 해석"}, {"n": 2, "nodes": ["r-12"], "label": "입력 가드레일"}, {"n": 3, "nodes": ["r-02", "r-11"], "label": "정규화·재작성·라우팅(분류기, 결정 모델 섀도)"}, {"n": 4, "nodes": ["r-03", "k-10", "k-04", "k-08"], "label": "ACL 사전 필터 → hybrid → 리랭킹 → 근거 단위(계약 ①)"}, {"n": 5, "nodes": ["r-04"], "label": "구조화 생성(문장별 evidence_id, abstain)"}, {"n": 6, "nodes": ["r-10"], "label": "규칙 게이트 + NLI 정합성, 재생성 상한 2회"}, {"n": 7, "nodes": ["ui-03"], "label": "렌더 가능한 응답(계약 ②)"}, {"n": 8, "nodes": ["ui-05", "ui-06", "ui-07"], "label": "규칙 매핑 → citation 렌더"}, {"n": 9, "nodes": ["ui-04", "r-08"], "label": "피드백·명확화 이벤트(계약 ③) → 상태"}, {"n": 10, "nodes": ["c-03", "c-04"], "label": "트레이스·샘플링 리뷰"}];
+const CROSS_ORDER = ["c-01", "c-02", "c-03", "c-04", "c-05"];
+
+// ---- 렌더 ----
+const svg = document.getElementById("arch");
+const NS = "http://www.w3.org/2000/svg";
+const tip = document.getElementById("tip");
+const LX = 40, LW = 980;
+const KB = LAYOUT.knowledge.y + 50 + LAYOUT.knowledge.rows.length * 56 + (LAYOUT.knowledge.rows.length - 1) * 10 + 14; // Knowledge 레이어 하단
+const CROSS = { x: 1040, y: 90, w: 160, h: KB - 90 };
+const STATE_LABEL = { on: "선택", part: "부분 선택", off: "미선택" };
+const rects = {};   // id → {x,y,w,h}
+const badges = {};  // id → [n,...]
+STEPS.forEach(s => s.nodes.forEach(id => { (badges[id] = badges[id] || []).push(s.n); }));
+
+function el(name, attrs, parent) {
+  const e = document.createElementNS(NS, name);
+  for (const k in attrs) e.setAttribute(k, attrs[k]);
+  (parent || svg).appendChild(e);
+  return e;
+}
+function text(x, y, str, cls, parent, anchor) {
+  const t = el("text", { x, y, class: cls || "", "text-anchor": anchor || "start" }, parent);
+  t.textContent = str; return t;
+}
+function wrapText(x, y, str, maxChars, g, lineH, maxLines) {
+  const words = str.split(" "); const lines = []; let cur = "";
+  for (const w of words) {
+    if ((cur + " " + w).trim().length > maxChars && cur) { lines.push(cur); cur = w; } else { cur = (cur + " " + w).trim(); }
+  }
+  if (cur) lines.push(cur);
+  const shown = lines.slice(0, maxLines || 3);
+  if (lines.length > shown.length) shown[shown.length - 1] += "…";
+  shown.forEach((ln, k) => text(x, y + k * (lineH || 14), ln, "", g));
+  return shown.length;
+}
+function showTip(e, title, body, href) {
+  tip.innerHTML = "";
+  const b = document.createElement("b"); b.textContent = title; tip.appendChild(b);
+  tip.appendChild(document.createTextNode(body));
+  if (href) { const p = document.createElement("span"); p.className = "path"; p.textContent = "→ " + href; tip.appendChild(p); }
+  const w = Math.min(360, window.innerWidth - 24);
+  tip.style.left = Math.min(e.clientX + 12, window.innerWidth - w - 12) + "px";
+  tip.style.top = (e.clientY + 12) + "px";
+  tip.style.opacity = 1;
+}
+function node(id, x, y, w, h, color, parent) {
+  const n = NODES[id];
+  const g = el("g", { class: "node " + (n.state || "on") + (n.trend ? " trend" : ""), tabindex: "0", role: "link", "aria-label": n.i + " " + n.t + " — " + STATE_LABEL[n.state || "on"] }, parent);
+  el("rect", { x, y, width: w, height: h, stroke: n.trend ? "var(--trend)" : color }, g);
+  if (n.i) text(x + 8, y + 13, n.i, "idx", g);
+  wrapText(x + 8, y + 30, n.t, Math.max(8, Math.floor(w / 11.5)), g, 14, 2);
+  rects[id] = { x, y, w, h };
+  const go = () => { window.location.href = BASE + n.href; };
+  g.addEventListener("click", go);
+  g.addEventListener("keydown", e => { if (e.key === "Enter") go(); });
+  g.addEventListener("mousemove", e => showTip(e, "[" + STATE_LABEL[n.state || "on"] + "] " + n.i + " " + n.t, n.why, n.href));
+  g.addEventListener("mouseleave", () => tip.style.opacity = 0);
+  return g;
+}
+function badgeRow(id) {
+  const r = rects[id], nums = badges[id]; if (!r || !nums) return;
+  nums.forEach((n, k) => {
+    const g = el("g", { class: "badge" });
+    const cx = r.x + r.w - 10 - k * 20, cy = r.y + 11;
+    el("circle", { cx, cy, r: 8.5 }, g);
+    text(cx, cy + 3.5, String(n), "", g, "middle");
+  });
+}
+function layer(id, L) {
+  const g = el("g", { id });
+  const rows = L.rows.length, rowH = 56, top = L.y + 50;
+  const h = 50 + rows * rowH + (rows - 1) * 10 + 14;
+  el("rect", { x: LX, y: L.y, width: LW, height: h, class: "layer-bg", rx: 10 }, g);
+  el("rect", { x: LX, y: L.y, width: 6, height: h, fill: L.color, rx: 3 }, g);
+  text(LX + 18, L.y + 22, L.label, "layer-label", g).setAttribute("fill", L.color);
+  text(LX + 18, L.y + 38, L.sub, "layer-sub", g);
+  const gap = 10, pad = 18;
+  L.rows.forEach((row, ri) => {
+    const w = (LW - pad * 2 - gap * (row.length - 1)) / row.length;
+    row.forEach((nid, k) => node(nid, LX + pad + k * (w + gap), top + ri * (rowH + 10), w, rowH, L.color, g));
+  });
+  return g;
+}
+Object.keys(LAYOUT).forEach(k => layer(k, LAYOUT[k]));
+
+// 횡단 관심사 세로 바
+(function () {
+  const g = el("g", { id: "cross" });
+  el("rect", { x: CROSS.x, y: CROSS.y, width: CROSS.w, height: CROSS.h, class: "layer-bg", rx: 10 }, g);
+  el("rect", { x: CROSS.x, y: CROSS.y, width: CROSS.w, height: 6, fill: "var(--cross)", rx: 3 }, g);
+  text(CROSS.x + 12, CROSS.y + 28, "Cross-cutting", "layer-label", g).setAttribute("fill", "var(--cross)");
+  text(CROSS.x + 12, CROSS.y + 46, "Part 5 · 횡단 관심사", "layer-sub", g);
+  const gap = 12, w = CROSS.w - 24, h = (CROSS.h - 64 - 12 - gap * (CROSS_ORDER.length - 1)) / CROSS_ORDER.length;
+  CROSS_ORDER.forEach((nid, k) => node(nid, CROSS.x + 12, CROSS.y + 64 + k * (h + gap), w, h, "var(--cross)", g));
+})();
+
+// 사용자 + 외부 노드 (레이어 위쪽)
+(function () {
+  const g = el("g", { id: "user", class: "ext" });
+  el("circle", { cx: LX + 20, cy: 26, r: 10, fill: "none", stroke: "currentColor", "stroke-width": 1.5 }, g);
+  el("path", { d: `M${LX + 2},58 a18,18 0 0 1 36,0`, fill: "none", stroke: "currentColor", "stroke-width": 1.5 }, g);
+  text(LX + 52, 44, "사용자", "", g);
+  rects["user"] = { x: LX, y: 14, w: 100, h: 46 };
+  EXTERNALS.forEach(ex => {
+    const eg = el("g", { class: "ext node " + (ex.state || "on"), tabindex: "0", role: "link" });
+    el("rect", { x: ex.x, y: 18, width: ex.w, height: 40 }, eg);
+    text(ex.x + 12, 43, ex.t, "", eg);
+    rects[ex.id] = { x: ex.x, y: 18, w: ex.w, h: 40 };
+    eg.addEventListener("click", () => { window.location.href = BASE + ex.href; });
+    eg.addEventListener("mousemove", e => showTip(e, "[" + STATE_LABEL[ex.state || "on"] + "] " + ex.t, ex.why, ex.href));
+    eg.addEventListener("mouseleave", () => tip.style.opacity = 0);
+  });
+})();
+
+// 레이어 간 계약 화살표 (점선)
+function contract(x1, y1, x2, y2, label, lx, ly) {
+  el("path", { d: `M${x1},${y1} L${x2},${y2}`, class: "flow-contract" });
+  const g = el("g", {}); const tw = label.length * 6.4 + 16;
+  el("rect", { x: lx - tw / 2, y: ly - 11, width: tw, height: 20, class: "contract" }, g);
+  text(lx, ly + 3, label, "contract-text", g, "middle");
+}
+(function () {
+  const iy = LAYOUT.interaction.y, ry = LAYOUT.reasoning.y, ky = LAYOUT.knowledge.y;
+  const ih = 50 + 2 * 56 + 10 + 14, rh = ih;
+  contract(300, iy + ih, 300, ry, "③ 사용자 이벤트 → 상태 머신", 300, (iy + ih + ry) / 2);
+  contract(760, ry, 760, iy + ih, "② 렌더 가능한 응답(텍스트 + citations + ui_intent)", 760, (iy + ih + ry) / 2);
+  contract(520, ky, 520, ry + rh, "① 근거 단위(evidence) 스키마 + 접근 정책", 520, (ky + ry + rh) / 2);
+})();
+
+// 번호 매긴 흐름 화살표: 연속 단계의 첫 노드 사이를 잇고, 중간에 번호 배지
+function anchor(r, toward) {
+  const cx = r.x + r.w / 2, cy = r.y + r.h / 2;
+  const dx = toward.x + toward.w / 2 - cx, dy = toward.y + toward.h / 2 - cy;
+  if (Math.abs(dy) > r.h / 2 + 4 && Math.abs(dy) >= Math.abs(dx) * 0.6) return { x: cx, y: dy > 0 ? r.y + r.h : r.y, v: true };
+  return { x: dx > 0 ? r.x + r.w : r.x, y: cy, v: false };
+}
+function flowArrow(fromId, toId, n, k) {
+  const a = rects[fromId], b = rects[toId]; if (!a || !b) return;
+  const p = anchor(a, b), q = anchor(b, a);
+  const off = ((k % 3) - 1) * 14;
+  let d;
+  if (p.v && q.v) { const my = (p.y + q.y) / 2; d = `M${p.x + off},${p.y} C${p.x + off},${my} ${q.x + off},${my} ${q.x + off},${q.y}`; }
+  else if (!p.v && !q.v) { const mx = (p.x + q.x) / 2; d = `M${p.x},${p.y + off} C${mx},${p.y + off} ${mx},${q.y + off} ${q.x},${q.y + off}`; }
+  else { d = `M${p.x},${p.y} Q${p.v ? p.x : q.x},${p.v ? q.y : p.y} ${q.x},${q.y}`; }
+  const path = el("path", { d, class: "flow", style: "color: var(--fg)" });
+  const L = path.getTotalLength ? path.getTotalLength() : 0;
+  const m = L ? path.getPointAtLength(L * 0.5) : { x: (p.x + q.x) / 2, y: (p.y + q.y) / 2 };
+  const g = el("g", { class: "badge" });
+  el("circle", { cx: m.x, cy: m.y, r: 9 }, g);
+  text(m.x, m.y + 3.5, String(n), "", g, "middle");
+}
+(function () {
+  let prev = null;
+  STEPS.forEach((s, k) => {
+    const from = s.from || (prev ? prev.nodes[0] : null);
+    if (from && from !== s.nodes[0]) flowArrow(from, s.nodes[0], s.n, k);
+    prev = s;
+  });
+  Object.keys(badges).forEach(badgeRow);
+})();
+
+// 흐름 설명 목록
+(function () {
+  const box = document.getElementById("steps");
+  const ol = document.createElement("ol");
+  STEPS.forEach(s => {
+    const li = document.createElement("li");
+    li.textContent = s.label + " ";
+    const sp = document.createElement("span");
+    sp.textContent = "(" + s.nodes.map(id => (NODES[id] ? NODES[id].i : id)).join(" · ") + ")";
+    li.appendChild(sp); ol.appendChild(li);
+  });
+  box.appendChild(ol);
+})();
+</script>
+</body>
+</html>

@@ -4,7 +4,7 @@ part: 07-appendix-scenarios
 stage: all
 tags: [overview, scenario, case-study]
 maturity: 미정
-status: draft
+status: review
 updated: 2026-10-11
 ---
 
@@ -44,9 +44,9 @@ updated: 2026-10-11
 
 | 시나리오 | 상태 | HTML |
 |---|---|---|
-| A | stub | scenario-document-qa.html (예정) |
-| B | stub | scenario-commerce-genui.html (예정) |
-| C | stub | scenario-ops-incident.html (예정) |
+| A | review | [scenario-document-qa.html](../assets/html/scenario-document-qa.html) |
+| B | review | [scenario-commerce-genui.html](../assets/html/scenario-commerce-genui.html) |
+| C | review | [scenario-ops-incident.html](../assets/html/scenario-ops-incident.html) |
 
 ## 관련 페이지
 

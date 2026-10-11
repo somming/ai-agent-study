@@ -4,7 +4,7 @@ part: 03-agent-workflow-rag
 stage: reasoning
 tags: [overview, agent, rag, workflow]
 maturity: 채택
-status: draft
+status: review
 updated: 2026-10-11
 ---
 

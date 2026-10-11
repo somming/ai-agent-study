@@ -4,7 +4,7 @@ part: 00-overview
 stage: all
 tags: [overview]
 maturity: 채택
-status: draft
+status: review
 updated: 2026-10-11
 ---
 

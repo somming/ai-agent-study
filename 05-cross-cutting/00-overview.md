@@ -4,7 +4,7 @@ part: 05-cross-cutting
 stage: all
 tags: [overview, security, cost, observability, governance, ops]
 maturity: 채택
-status: draft
+status: review
 updated: 2026-10-11
 ---
 

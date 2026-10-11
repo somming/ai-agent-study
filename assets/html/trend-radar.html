@@ -120,6 +120,7 @@ const P = {
   "3/02": "03-agent-workflow-rag/02-query-understanding.md",
   "3/03": "03-agent-workflow-rag/03-retrieval-reranking.md",
   "3/04": "03-agent-workflow-rag/04-generation-grounding.md",
+  "3/06": "03-agent-workflow-rag/06-agent-design-patterns.md",
   "3/07": "03-agent-workflow-rag/07-multi-agent-orchestration.md",
   "3/08": "03-agent-workflow-rag/08-state-memory-context.md",
   "3/09": "03-agent-workflow-rag/09-tools-and-mcp.md",
@@ -176,6 +177,7 @@ const ITEMS = [
   { id: "T26", name: "프레임워크 재편", quad: "시험", layer: "reasoning", seen: "2026-03", gist: "Swarm → OpenAI Agents SDK · Claude Code SDK → Claude Agent SDK(hooks) · Google ADK 다언어(Java 1.0.0 2026-03) · AutoGen 유지보수. 기본값이 \"밖 모듈 먼저\"로", ev: "[2차]", apply: ["3/14","3/07","3/08"], deep: P["3/14"] },
   { id: "T27", name: "AutoGen 신규 채택", quad: "보류", layer: "reasoning", seen: "2026", gist: "유지보수 모드 전환 → 신규 프로젝트 비권장. 99 매트릭스 \"피해야 할 조합\"", ev: "[2차]", apply: ["3/14"], deep: P["3/14"] },
   { id: "T28", name: "Agentic RAG", quad: "시험", layer: "reasoning", seen: "2025-10", gist: "검색이 에이전트 루프 \"앞\"이 아니라 \"안\"으로 — 검색도 툴이며 신뢰 경계·스키마 규칙을 따른다", ev: "[2차]", apply: ["3/01","3/09"], deep: P["3/01"] },
+  { id: "T29", name: "코드 실행형 행동 공간 (CodeAct / Code Mode)", quad: "시험", layer: "reasoning", seen: "2025-09", seenLabel: "2025-09 (Cloudflare Code Mode; Anthropic 2025-11)", gist: "행동 공간을 JSON 툴 호출 1회에서 실행 가능한 코드 1블록으로. 원 논문(ICML 2024)은 기간 앞, 상용화(Anthropic·Cloudflare·MS·smolagents)는 최근 1년. 절감 수치는 [벤더]이고 소스 간 차이 큼. 행동 게이트는 샌드박스 call_tool 경계에서, 생성 코드가 감사 레코드", ev: "[검증] Wang et al. ICML 2024 · 절감 [벤더] [2차]", apply: ["3/06","3/09","3/12"], deep: P["3/06"] },
 ];
 
 // ---- 레이아웃 ----

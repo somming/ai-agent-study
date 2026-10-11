@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>에이전트 설계 패턴 — 6개 루프 구조 비교</title>
+<title>에이전트 설계 패턴 — 7개 루프 구조 비교</title>
 <style>
   :root {
     --bg: #fafaf8; --fg: #1d1d1b; --muted: #6b6b6b; --line: #d9d9d4; --card: #ffffff;
@@ -45,8 +45,8 @@
 </head>
 <body>
 <header>
-  <h1>에이전트 설계 패턴 — 6개 루프 구조 나란히 비교</h1>
-  <p>각 패널은 하나의 패턴. 상자 위에 마우스를 올리면 그 스텝의 설명이, 패널을 클릭하면 본문 페이지로 이동합니다. 점선 상자는 <b>선택지가 닫힌 판정</b>으로, 결정 모델·규칙이 맡을 수 있는 자리입니다.</p>
+  <h1>에이전트 설계 패턴 — 7개 루프 구조 나란히 비교</h1>
+  <p>각 패널은 하나의 패턴. 상자 위에 마우스를 올리면 그 스텝의 설명이, 패널을 클릭하면 본문 페이지로 이동합니다. 점선 상자는 <b>선택지가 닫힌 판정</b>으로, 결정 모델·규칙이 맡을 수 있는 자리입니다. 7번째 CodeAct는 ReAct의 행동 공간을 "JSON 툴 호출 1회"에서 "코드 1블록"으로 바꾼 변형으로, 게이트가 샌드박스의 <code>call_tool</code> 경계로 이동합니다.</p>
 </header>
 <div class="legend">
   <span style="--c: var(--reasoning)">LLM 생성 스텝 (색 채움)</span>
@@ -56,7 +56,7 @@
   <span style="--c: var(--trend)">루프 되돌림 (상한 필수)</span>
 </div>
 <div class="wrap">
-<svg id="pat" viewBox="0 0 1240 1050" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="에이전트 설계 패턴 6종 루프 비교">
+<svg id="pat" viewBox="0 0 1240 1560" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="에이전트 설계 패턴 7종 루프 비교">
   <defs>
     <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#6b6b6b"/></marker>
     <marker id="aT" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#8E44AD"/></marker>
@@ -138,6 +138,20 @@ const PATTERNS = [
       { id: "syn", t: "충돌 검사 → 종합", x: 60, y: 240, w: 140, h: 36, k: "llm", d: "워커 결과 모순·중복 제거 후 종합. 워커가 자체 루프를 가지면 Supervisor (07)" },
     ],
     edges: [["orc","who"],["who","w1","fanD"],["who","w2","fanD"],["who","w3","down"],["w1","syn","down"],["w2","syn","down"],["w3","syn","down"]] },
+  // 7번째 패널: CodeAct — 행동 공간이 JSON 툴 호출 1회가 아니라 실행 가능한 코드 1블록. 게이트는 샌드박스의 call_tool 경계로 이동
+  { name: "CodeAct (코드 실행형 행동 공간)", sub: "생각 → 코드 1블록 → 샌드박스 실행(call_tool×N) → 요약 → 반복", href: P3 + "06-agent-design-patterns.md",
+    cost: "코드 블록 수에 비례 (ReAct보다 턴 적음) + 샌드박스 컴퓨트", fit: "툴 다수·조합, 대량 중간 데이터, 반복·조건·집계 배치 과업", bad: "행동 1~2개 단순 과업, 샌드박스 운영 불가, 전 호출 승인 필요 경로", fail: "코드 오류 루프 · 샌드박스 탈출 시도 · 게이트 우회 · 디버깅 난이도",
+    steps: [
+      { id: "st", t: "상태 (목표 + 요약 히스토리)", x: 20, y: 60, w: 170, h: 36, k: "code", d: "중간 데이터는 샌드박스에 남고, 컨텍스트에는 결과 요약만 쌓인다 (08)" },
+      { id: "think", t: "생각", x: 20, y: 130, w: 60, h: 36, k: "llm", d: "현재 상태 해석. 생성 과업" },
+      { id: "cont", t: "계속? (코드/답변)", x: 100, y: 130, w: 100, h: 36, k: "judge", d: "다음 블록을 쓸지 종료할지 — 닫힌 선택지. 결정 모델·규칙 자리. 블록 수 상한 필수" },
+      { id: "code", t: "코드 1블록 작성", x: 230, y: 130, w: 120, h: 36, k: "llm", d: "반복·조건·집계를 코드로. 원 논문(ICML 2024) [검증]: JSON 행동 대비 평균 턴 5.5 vs 7.6" },
+      { id: "run", t: "샌드박스 실행", x: 230, y: 200, w: 120, h: 36, k: "tool", d: "네트워크·파일 격리, 자원 상한. 모델 코드는 call_tool 외의 I/O에 닿지 못한다. 실패 시 fail-closed" },
+      { id: "gate", t: "call_tool 게이트 ×N", x: 100, y: 200, w: 100, h: 36, k: "judge", d: "코드 안의 호출마다 규칙 게이트(권한·한도·등급)·멱등 키·트레이스. 승인 필요 → 실행 중단 → 체크포인트 → 재개 (09·12). 등급 5 툴은 미노출" },
+      { id: "sum", t: "결과 요약만", x: 100, y: 270, w: 100, h: 36, k: "code", d: "stdout·반환값 요약만 컨텍스트로. 코드 원문은 감사 레코드, 스팬(agent.code_exec)에는 해시" },
+      { id: "end", t: "답변", x: 20, y: 200, w: 60, h: 36, k: "llm", d: "종료 판정이 '답변'이면 종합. 코드 오류 상한 도달 시 Tool-use(JSON) 폴백" },
+    ],
+    edges: [["st","think","down"],["think","cont"],["cont","code"],["code","run","down"],["run","gate","left"],["gate","sum","down"],["sum","st","loop"],["cont","end","down"]] },
 ];
 
 const svg = document.getElementById("pat");
@@ -187,6 +201,7 @@ PATTERNS.forEach((p, i) => {
       d = `M${A.x + A.w},${A.y + A.h / 2} L${rx},${A.y + A.h / 2} L${rx},${B.y + B.h / 2} L${B.x + B.w + 1},${B.y + B.h / 2}`;
     }
     else if (mode === "fan" || mode === "fanD") d = `M${A.x + A.w},${A.y + A.h / 2} L${B.x},${B.y + B.h / 2}`;
+    else if (mode === "left") d = `M${A.x},${A.y + A.h / 2} L${B.x + B.w},${B.y + B.h / 2}`;   // 왼쪽 이웃으로 (CodeAct: 샌드박스 → call_tool 게이트)
     else d = `M${A.x + A.w},${A.y + A.h / 2} L${B.x},${B.y + B.h / 2}`;
     if (mode === "fanD") d = `M${A.x + A.w / 2},${A.y + A.h} L${B.x + B.w / 2},${B.y}`;
     el("path", { d, class: "e" + (mode === "loop" ? " loop" : "") }, g);
@@ -201,11 +216,13 @@ PATTERNS.forEach((p, i) => {
   });
 });
 
-// 하단 노트
+// 하단 노트 — 패널 행 수(3열 기준, 7패널 = 3+3+1)에 맞춰 위치
 (function () {
-  const y = OY + 2 * (PH + GY) + 10;
+  const rows = Math.ceil(PATTERNS.length / 3);
+  const y = OY + rows * (PH + GY) + 10;
   text(OX, y, "선택: 툴 한 번이면 Tool-use → 계획 가능하면 Plan-and-Execute → 매 스텝 의존·≤10스텝이면 ReAct → 기준 있는 품질 반복이면 Reflection(평가자 분리) → 유형 이질이면 Router → 동적 분해면 Orchestrator-Worker", "meta");
-  text(OX, y + 18, "판단이 어려우면 → Router → Plan-and-Execute, 각 단계는 Tool-use. 호출 수가 거의 고정이라 비용·디버깅이 통제된다. 모든 점선(판정) 자리는 결정 모델(Jev / Decisions API)·규칙으로 대체 가능 — 한국어 [실측] 선행.", "meta");
+  text(OX, y + 18, "툴이 수십 개 이상이고 중간 결과가 크면 → CodeAct 계열. 단 샌드박스와 call_tool 경계 게이트가 먼저 — 게이트가 모델 바깥으로 옮겨지지 않으면 행동 가드레일이 사라진다. 절감 수치는 [벤더]이므로 자체 [실측].", "meta");
+  text(OX, y + 36, "판단이 어려우면 → Router → Plan-and-Execute, 각 단계는 Tool-use. 호출 수가 거의 고정이라 비용·디버깅이 통제된다. 모든 점선(판정) 자리는 결정 모델(Jev / Decisions API)·규칙으로 대체 가능 — 한국어 [실측] 선행.", "meta");
 })();
 </script>
 </body>

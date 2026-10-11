@@ -51,6 +51,17 @@
 - **MemTrapBench**: 메모리 프레임워크 5종 모두 no-memory 베이스라인보다 **나쁨**. 관련 기억이 이전 과업 프레임에 모델을 고착 → `[2차]`. 결론: 메모리는 no-memory 대비로 평가
 - Claude Agent SDK GitHub 스타 7.3K vs 14K 소스 충돌 → 인용 비권장
 
+## 코드 실행형 행동 공간 (CodeAct / Code Mode / Programmatic Tool Calling)
+
+- **CodeAct** — Wang et al., "Executable Code Actions Elicit Better LLM Agents", ICML 2024 (arXiv 2402.01030). 에이전트의 행동 공간을 JSON 툴 호출 대신 **실행 가능한 파이썬 코드**로. 17개 LLM에서 JSON/텍스트 대비 **최대 20% 높은 성공률**, GPT-4 기준 74.4% vs 52.4%·평균 턴 5.5 vs 7.6 → `[검증]` (원 논문 수치)
+- **Anthropic "Code execution with MCP"** (2025-11 엔지니어링 블로그): MCP 서버를 코드 API로 노출, 모델이 코드로 호출해 툴을 온디맨드 로드·중간 데이터를 모델 밖에서 필터. Claude SDK의 **Programmatic Tool Calling**, 관련 **Tool Search Tool**(85% 토큰 절감 주장). "98.7% 절감"은 2차 인용, 독립 테스트(AIMultiple)는 78.5% → `[벤더]` `[2차]`
+- **Cloudflare Code Mode** (2025-09 공개, 2026-04 Code Mode MCP 서버, 2026-07-30 포털 정책 Off/Opt-in/On/Enforced): MCP 서버 전체를 `search()` + `execute()` 두 툴로 접고 샌드박스 JS 실행. "대형 API에서 입력 토큰 99.9% 절감(117만 토큰 기준선)"은 벤더, 독립 보도는 단순 32% / 복잡 배치 81% → `[벤더]` `[2차]` 소스 간 차이 큼
+- **Microsoft Agent Framework CodeAct** (BUILD 2026): 모델이 `call_tool(…)`을 호출하는 짧은 파이썬을 한 번 작성, Hyperlight 마이크로 VM에서 호출당 격리 실행. 알파 패키지. 단일 예시 6,890 → 2,489 토큰 → `[벤더]`
+- **Hugging Face smolagents**: `CodeAgent`가 기본값(코드로 툴 호출), `ToolCallingAgent`는 JSON. 샌드박스 옵션 Modal / Blaxel / E2B / Docker / Pyodide·Deno → `[벤더]` 문서
+- **OpenHands**(구 OpenDevin): 소프트웨어 에이전트 벤치마크에서 CodeAct 구현체로 자주 등장. 2026 채택 데이터 미확인 → `[2차]`
+- 공통 전제: **샌드박스 필수**(네트워크·파일 격리, 자원 상한), 절감 폭은 툴 수·중간 데이터 크기에 비례(단순 과업은 작음). 이 위키의 설계 함의: 툴 호출이 코드 안에서 일어나므로 **행동 게이트를 샌드박스의 `call_tool` 경계에서 강제**해야 하고, **생성 코드 자체가 감사 레코드**가 된다
+- 서술 규칙: 세 벤더 구현을 "코드 실행형 행동 공간(CodeAct 계열)"으로 묶고, 수치는 원 논문만 `[검증]`, 나머지 전부 `[벤더]`/`[2차]`
+
 ## 프로토콜
 
 - **MCP 2026-07-28 개정**: RC 2026-05-21, 최종 2026-07-28. initialize 핸드셰이크·Mcp-Session-Id 제거 → **무상태 코어**, 라운드로빈 스케일링. **Multi Round-Trip Requests**, **Tasks 확장**(장기 실행), **MCP Apps 확장**(서버 렌더 UI). C# SDK v2.0 하위 호환 → `[2차]` 공식 changelog 재확인 권장

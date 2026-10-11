@@ -113,6 +113,8 @@ session
       ├─ retrieval.search / retrieval.rerank / retrieval.assemble
       ├─ generation.generate / generation.verify ← 모델 호출은 자식 스팬 (gen_ai.*)
       ├─ tool.invoke {tool_name}                 ← MCP/함수 호출, 결과 요약만
+      ├─ agent.code_exec                         ← CodeAct 계열: 생성 코드 1블록 실행, 자식으로 tool.invoke ×N
+      │    └─ tool.invoke {tool_name}            ← 샌드박스 call_tool 경계에서 게이트·멱등·트레이스 적용
       ├─ gate.evaluate {gate_name}               ← 규칙 ∧ 모델, 출력 4종
       ├─ approval.request → approval.resolve     ← 사람 승인 (이벤트 쌍)
       └─ ui.map / ui.render / ui.event           ← Interaction 레이어, 프론트에서 보고
@@ -129,6 +131,7 @@ session
 | 결과 | `agent.outcome` (success / fallback / degraded / blocked / approval_required), `agent.degradation[]` | 저하·폴백·차단의 분포 |
 | 판정 | `agent.decision`, `agent.confidence`, `agent.decision_source` (rule / decision_model / classifier / llm) | 보정 곡선, 라우팅 정확도 |
 | 근거 | `agent.evidence_ids[]`, `agent.evidence_count` | 근거 추적, 삭제 전파 검증 |
+| 코드 실행 (CodeAct 계열) | `agent.code_hash`, `agent.inner_tool_calls`, `agent.sandbox_exit_reason` | 생성 코드 원문은 감사 레코드에, 스팬에는 해시. 내부 호출 수와 샌드박스 종료 사유로 우회·고갈 탐지 |
 | 비용 | `gen_ai.usage.input_tokens / output_tokens`, `agent.cached_tokens`, `agent.cost_estimate` | 요청당 비용 분해 |
 | 지연 | 스팬 duration + `agent.queue_wait_ms` | 적체 vs 처리 분리 |
 

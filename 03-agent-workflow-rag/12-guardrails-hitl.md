@@ -70,8 +70,11 @@ HITL은 그 반대편 문제를 가진다. 승인을 너무 많이 요구하면 
 | 행동 | 한도 초과(금액·건수·빈도) | 정책 엔진 | — | 차단 또는 승인 요청 |
 | 행동 | 외부 데이터 읽은 후 전송(유출 패턴) | 시퀀스 규칙(등급 상향) | 결정 모델 `boolean("승인 필요")` | 승인 요청 |
 | 행동 | 되돌릴 수 없는 작업 | 등급 "파괴적" 규칙 | — | 항상 승인 |
+| 행동 (코드 실행형) | 코드 1블록 안의 N개 툴 호출이 게이트 없이 실행됨 | 샌드박스 `call_tool` 경계의 정책 엔진(호출마다) | 결정 모델 `boolean("승인 필요")`(호출마다) | 승인 필요 호출에서 실행 중단 → 체크포인트 → 승인 → 재개 |
 
 1차 수단이 결정할 수 있으면 2차는 호출하지 않는다. 2차 수단은 1차가 "모르겠다"일 때만 돈다.
+
+**코드 실행형 에이전트에서의 행동 게이트.** CodeAct 계열·Code Mode([06](06-agent-design-patterns.md), [09](09-tools-and-mcp.md))는 행동 공간을 "JSON 툴 호출 1회"에서 "실행 가능한 코드 1블록"으로 바꾼다. 툴 호출이 모델 출력이 아니라 **코드 안에서** 일어나므로, "툴 실행 직전"이라는 행동 가드레일의 자리가 모델 바깥 **샌드박스의 `call_tool` 경계**로 이동한다. 이 페이지의 입장은 바뀌지 않는다 — 행동 직전 규칙 게이트 필수, 등급 5 자동 실행 금지 — 적용 방식만 다음 네 가지로 구체화된다. ① 코드 1블록 안의 N개 호출 **각각**에 등급별 게이트가 돈다(블록 단위 일괄 승인은 게이트가 아니다. 블록 안의 조건·반복은 실행 전에 알 수 없다) ② 승인이 필요한 호출(등급 3 이상, 외부 데이터 읽은 뒤 전송)이 코드 중간에 나오면 샌드박스가 실행을 **중단**하고 체크포인트([08](08-state-memory-context.md))를 남긴 뒤 승인 흐름으로 간다. 승인 후 재개 시 이미 실행된 호출은 멱등 키·"실행 완료" 기록으로 건너뛰고, 만료는 거부다 ③ 등급 5 툴은 `call_tool`에 노출하지 않는다 ④ **생성 코드 원문 + 실행 로그를 감사 레코드에** 남기고, 관측 스팬(`agent.code_exec`)에는 `agent.code_hash`만 두어 둘을 연결한다. 코드 원문이 없으면 "그때 왜 그 호출이 났나"를 재구성할 수 없다. 샌드박스나 `call_tool` 게이트가 죽으면 fail-closed(코드 실행 경로 닫힘)다.
 
 ### 정책 엔진
 
@@ -243,11 +246,17 @@ audit_record {
                args_hash_verified: bool,                           # 승인 인자 해시 재검증 결과
                result_summary_ref? },
   exception?: { type: review|break_glass, exception_id, actor, reason, post_audit_ref? },
+  code_exec?: { code_hash,                                        # 코드 실행형(CodeAct / Code Mode)일 때. 관측 스팬 agent.code_exec 의 agent.code_hash 와 조인
+                code_ref,                                         # 생성 코드 원문의 감사 저장소 참조 (스팬에는 해시만)
+                language, sandbox_id, sandbox_exit_reason,        # ok|error|timeout|resource_limit|gate_block|approval_pause
+                inner_tool_calls: [ { seq, tool, args_hash, gate_output, rule_ids[], idempotency_key?, executed: bool } ],
+                paused_at_seq?, resumed_from_checkpoint_id?,      # 승인 중단·재개 지점
+                exec_log_ref? },                                  # stdout/stderr 마스킹본 참조
   versions: { policy_set, rule_set, approval_matrix, guardrail_model, prompt, framework }  # 시점 재현 키
 }
 ```
 
-필드 선택의 기준은 하나다 — **"그때 왜 그렇게 됐나"를 이 레코드만으로 재구성할 수 있는가.** `card_shown`이 없으면 "승인자가 틀린 정보를 보고 승인했는가"를 답할 수 없고, `rule_version`이 없으면 "그때 규칙이 무엇이었나"를 복원할 수 없으며, `fallback`이 없으면 결정 모델 장애 중의 판정을 정상 판정과 구분할 수 없다. 관측 로그에 있는 지연·토큰·스팬 세부는 여기 넣지 않는다.
+필드 선택의 기준은 하나다 — **"그때 왜 그렇게 됐나"를 이 레코드만으로 재구성할 수 있는가.** `card_shown`이 없으면 "승인자가 틀린 정보를 보고 승인했는가"를 답할 수 없고, `rule_version`이 없으면 "그때 규칙이 무엇이었나"를 복원할 수 없으며, `fallback`이 없으면 결정 모델 장애 중의 판정을 정상 판정과 구분할 수 없다. 코드 실행형이라면 `code_exec.code_ref`가 없으면 "어떤 코드가 그 N개 호출을 냈나"를, `inner_tool_calls[].gate_output`이 없으면 "각 호출이 게이트를 거쳤나"를 답할 수 없다. 관측 로그에 있는 지연·토큰·스팬 세부는 여기 넣지 않는다.
 
 ## 아키텍처 / 파이프라인
 
@@ -375,6 +384,7 @@ SLI 후보: 승인 응답 시간 p50/p95 — 공통 정의는 **"승인 요청 �
 | 승인 후 실행 | `tool.invoke`에 `approval_id` 전파, 실행 직전 `verify.schema`(승인된 인자 해시 재검증) | `approval_id, agent.args_hash_match, agent.resumed_from_checkpoint_id`([08](08-state-memory-context.md) TTL 불변식) | 승인 → 실행 성공률, 인자 불일치 거부 건수, **승인 후 되돌림률**(품질 — 승인이 형식화되는 신호), 승인 후 체크포인트 재개 실패 수 | 전수 |
 | 오탐·미탐·재심 | `eval.sample` — 차단 건 층화 샘플(오탐), 통과 건 사후 샘플(미탐); 오프라인 `eval.run redteam`(규칙·분류기 변경마다); 재심은 `approval.request review`로 같은 이벤트 쌍 재사용 | `agent.review_label, agent.rules_version, agent.redteam_set_version, agent.review_outcome`(allow_once / rule_candidate / rejected) | 오탐률(→ 동명 SLI), 미탐률(사후 샘플), 레드팀 통과율, 재심 요청률·재심 결과 분포 | 샘플 + 재심 건 전수 |
 | break-glass·일회 허용 | 이벤트 `gate.override`, 부모 `gate.evaluate`; `agent.override_type`(break_glass / review_allow_once) | `agent.override_actor_role, agent.override_reason_code, approval_id?`, 사유 원문은 감사로 | override 건수(기본 0), 역할·사용자 해시별 집중도 | 전수, 발생 즉시 감사 레코드 생성 |
+| 코드 실행형 행동 게이트 | `gate.evaluate tool_gate`, 부모 `tool.invoke` ← 부모 `agent.code_exec`(샌드박스 `call_tool` 경계에서 호출마다 생성). 승인 중단은 `approval.request` + `agent.sandbox_exit_reason=approval_pause` | `agent.code_hash`(코드 원문·실행 로그는 감사 레코드 `code_exec` 필드군으로, 조인 키), `agent.inner_tool_calls`, 호출 순번 `seq`, 재개 체크포인트 ID | 블록당 게이트 출력 분포, `inner_tool_calls` ≠ 자식 `tool.invoke` 수 건수(0이어야 — 우회 신호), 승인 중단 후 재개 성공률 | 메타 전수, 코드 원문은 감사 저장소 전수 |
 | 규칙 버전 효과 | 지표 차원으로 `agent.rules_version` 전환 전후 24시간 비교(별도 스팬 없음) | — | 버전별 차단률·오탐률 델타(배포 직후 민감도 상향 창) | — |
 
 | 알림 | 조건 (예시) | 심각도 | 런북 (첫 3단계) |
@@ -411,6 +421,7 @@ SLI 후보: 승인 응답 시간 p50/p95 — 공통 정의는 **"승인 요청 �
 - [ ] 반복 승인을 규칙으로 승격하는 절차와 주기가 정해져 있는가
 - [ ] 게이트 출력 4종 분포·승인 큐 깊이·대기 p95·만료율·승인자당 일일 건수가 한 화면(대시보드 ③)에 있고, 승인 카드 내용·인자 원문은 관측 스팬이 아니라 감사 레코드에만 있는가
 - [ ] break-glass·일회 허용이 `gate.override` 이벤트로 P1 알림과 감사 레코드 자동 생성으로 이어지는가
+- [ ] 코드 실행형이라면 코드 안의 모든 툴 호출이 `call_tool` 경계 게이트를 거치고(`inner_tool_calls` = 자식 `tool.invoke` 수), 승인 필요 호출에서 중단 → 체크포인트 → 재개가 되며, 생성 코드 원문이 감사 레코드 `code_exec`에 해시로 연결되어 있는가
 
 ## 최신 트렌드 적용 (최근 1년)
 
@@ -420,6 +431,7 @@ SLI 후보: 승인 응답 시간 p50/p95 — 공통 정의는 **"승인 요청 �
 | 결정 모델 (Jev / Decisions API) | "승인 필요한가", "인젝션 시도인가", "근거에 부합하는가"를 보정 확률로 판정해 세 갈래 HITL 라우팅. 승인 피로의 직접적 완화 수단 | 보정 `[실측]`, 한국어 평가셋 | `[2차]` 사례 미확인 |
 | MCP Multi Round-Trip | 서버가 처리 중 클라이언트에 확인을 요청할 수 있어 승인 흐름이 프로토콜 수준에서 표현 가능 | MCP 2026-07-28 채택 | `[2차]` |
 | AG-UI 상태 패치·툴 이벤트 | 승인 이벤트를 표준 이벤트 스트림으로 UI에 전달 | [Part 4/02](../04-dynamic-ui/02-protocols-ag-ui-a2ui-mcp-apps.md) | `[2차]` `[벤더]` |
+| 코드 실행형 행동 공간 (CodeAct / Code Mode) | 행동 게이트의 자리가 모델 출력 직후에서 **샌드박스 `call_tool` 경계**로 이동. 블록 안 N개 호출 각각에 게이트, 승인 필요 시 중단·체크포인트·재개, 생성 코드 원문이 감사 레코드(`code_exec` 필드군) | 코드 실행형 패턴 채택 시 — [06](06-agent-design-patterns.md), [09](09-tools-and-mcp.md) | `[검증]` 원 논문 · 구현 `[벤더]` · [연구 노트](../_meta/research-notes-2026-10.md) |
 
 ## 관련 페이지
 

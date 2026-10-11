@@ -30,6 +30,7 @@ updated: 2026-10-11
 | [에이전트 메모리 생태계](agent-memory.md) | 대화용 vs 운영지식용으로 분화. LoCoMo/LongMemEval 표준화. no-memory보다 나쁠 수 있다는 벤치마크 | 관찰 | P3/08 |
 | [에이전트 프로토콜 수렴](agentic-protocols-convergence.md) | MCP(툴) · A2A(에이전트 간) · AG-UI(프론트-백) · A2UI(선언적 UI) · MCP Apps(샌드박스 앱)로 역할 분담 | 시험 | P1/05, P3/07·09, P4/02 |
 | [Generative UI](generative-ui.md) | Controlled / Declarative / Open-ended 3패턴 정착, 모바일 렌더러 확산 | 시험 | P4 전체 |
+| 코드 실행형 행동 공간 (CodeAct / Code Mode / Programmatic Tool Calling) — 심화 페이지 없음, 본거지는 [3/06](../03-agent-workflow-rag/06-agent-design-patterns.md)·[3/09](../03-agent-workflow-rag/09-tools-and-mcp.md), 수치는 [연구 노트](../_meta/research-notes-2026-10.md) | 행동 공간을 JSON 툴 호출 1회에서 실행 가능한 코드 1블록으로(원 논문 ICML 2024 `[검증]`). Anthropic Code execution with MCP(2025-11) · Cloudflare Code Mode(2025-09) · MS Agent Framework CodeAct(BUILD 2026) · smolagents 기본값. 절감 수치는 `[벤더]`·`[2차]`, 소스 간 차이 큼. 설계 함의: 행동 게이트를 샌드박스 `call_tool` 경계에서 강제, 생성 코드가 감사 레코드 | 시험 | P3/06·09·12 |
 
 ## 결정 모델 두 접근의 요점 비교 (상세는 전용 페이지)
 

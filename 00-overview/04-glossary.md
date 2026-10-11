@@ -75,6 +75,9 @@ updated: 2026-10-11
 
 - **워크플로우 vs 에이전트** — 코드가 경로를 정하는 결정론적 구성 vs 모델이 경로를 정하는 자율 구성. 스펙트럼이며 "가장 단순한 형태에서 시작". → [3/05](../03-agent-workflow-rag/05-workflow-vs-agent.md)
 - **ReAct / Plan-and-Execute / Reflection / Orchestrator-Worker** — 에이전트 설계 패턴. → [3/06](../03-agent-workflow-rag/06-agent-design-patterns.md)
+- **CodeAct / 코드 실행형 행동 공간** (CodeAct, executable code actions) — 에이전트의 행동 공간을 JSON 툴 호출 1회 대신 **실행 가능한 코드 1블록**으로 두는 ReAct 변형(Wang et al., ICML 2024 `[검증]`). 코드가 샌드박스에서 실행되며 안에서 `call_tool`을 N번 부르고, 결과 요약만 컨텍스트로 돌아온다. 이 위키는 Anthropic Code execution with MCP · Cloudflare Code Mode · Microsoft Agent Framework CodeAct를 "CodeAct 계열"로 묶는다. 샌드박스 필수. → [3/06](../03-agent-workflow-rag/06-agent-design-patterns.md), [3/09](../03-agent-workflow-rag/09-tools-and-mcp.md)
+- **Code Mode** — MCP 서버 전체를 `search()`(툴 정의 검색) + `execute()`(샌드박스 코드 실행) **두 툴**로 접고 모델이 코드로 툴을 호출하는 구성. Cloudflare 2025-09 공개, 2026-04 Code Mode MCP 서버. 절감 수치는 `[벤더]`이며 소스 간 차이 큼. → [3/09](../03-agent-workflow-rag/09-tools-and-mcp.md)
+- **`call_tool` 경계 게이트** (`call_tool` boundary gate) — 코드 실행형 에이전트에서 코드 안의 모든 툴 호출이 샌드박스가 노출한 `call_tool` 함수를 통해서만 가능하고, 그 함수 안에서 규칙 게이트(권한·한도·등급)·멱등 키·트레이스가 호출마다 적용되는 원칙. 승인 필요 호출은 실행 중단 → 체크포인트 → 승인 → 재개. 생성 코드 원문은 감사 레코드, 스팬에는 해시. 이 위키의 명명. → [3/09](../03-agent-workflow-rag/09-tools-and-mcp.md), [3/12](../03-agent-workflow-rag/12-guardrails-hitl.md)
 - **Supervisor / Hierarchical / Handoff** — 멀티 에이전트 토폴로지. → [3/07](../03-agent-workflow-rag/07-multi-agent-orchestration.md)
 - **컨텍스트 엔지니어링** (context engineering) — 컨텍스트 윈도우에 무엇을 넣고 **빼고** 어떻게 구조화할지의 공학. 프롬프트 엔지니어링의 확장. → [3/08](../03-agent-workflow-rag/08-state-memory-context.md), [6/context-engineering](../06-trends/context-engineering.md)
 - **compaction** — 긴 히스토리·상태를 요약·압축해 컨텍스트 예산 안에 유지하는 것

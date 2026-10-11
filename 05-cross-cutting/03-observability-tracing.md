@@ -131,6 +131,19 @@ turn(trace_id=T)
 
 판단 기준: **감사 레코드 스키마는 트레이스 스키마보다 느리게, 트레이스 스키마는 OTel 매핑보다 느리게** 바꾼다. 세 속도가 역전되면(감사 필드를 OTel 속성명에 직접 묶는 등) 외부 표준의 변경이 규제 대응 데이터를 깨뜨린다. 2026-10 시점에서 OTel GenAI 속성은 아직 안정 등급이 아니므로 `[2차]`, 이 분리는 선택이 아니라 전제다.
 
+### 단계별 관측 설계 색인 — 규약은 1/07, 적용은 각 단계 페이지
+
+이 페이지는 **운영 도구와 횡단 정책**(스키마 표준화·매핑 계층·PII·샘플링·대시보드)을 다룬다. 어느 스팬을 어떤 이름으로, 어떤 속성과 지표로 내는지의 **규약**은 [Part 1/07 관측성 설계 요소](../01-foundations/07-operations-vocabulary.md)가 정의하고(스팬 계층 `session → turn → invoke_agent → <stage>.<operation>`, 공통 속성 `agent.*`와 버전 키 5종, 지표 3종, 알림→런북, 대시보드 3장), **단계마다 무엇을 기록·측정·알림하는지**는 각 단계 페이지의 "운영 설계 → 관측성" 소절이 답한다. 아래가 그 색인이다.
+
+| 레이어 | 단계 페이지 (운영 설계 → 관측성 소절) | 대표 스팬 |
+|---|---|---|
+| Knowledge | [2/01](../02-data-pipeline/01-source-ingestion.md) · [2/02](../02-data-pipeline/02-chunking-strategies.md) · [2/03](../02-data-pipeline/03-metadata-provenance.md) · [2/04](../02-data-pipeline/04-embedding-indexing.md) · [2/05](../02-data-pipeline/05-knowledge-graph-construction.md) · [2/06](../02-data-pipeline/06-ontology-driven-modeling.md) · [2/07](../02-data-pipeline/07-freshness-and-sync.md) · [2/08](../02-data-pipeline/08-grounding-data-design.md) · [2/09](../02-data-pipeline/09-ai-inside-the-pipeline.md) · [2/10](../02-data-pipeline/10-access-control-governance.md) | `ingest.*`, `index.*`, `kg.*`, `sync.*`, `acl.resolve`, `evidence.assemble` (문서 단위 트레이스) |
+| Reasoning / Action | [3/01](../03-agent-workflow-rag/01-rag-architecture-patterns.md) · [3/02](../03-agent-workflow-rag/02-query-understanding.md) · [3/03](../03-agent-workflow-rag/03-retrieval-reranking.md) · [3/04](../03-agent-workflow-rag/04-generation-grounding.md) · [3/05](../03-agent-workflow-rag/05-workflow-vs-agent.md) · [3/06](../03-agent-workflow-rag/06-agent-design-patterns.md) · [3/07](../03-agent-workflow-rag/07-multi-agent-orchestration.md) · [3/08](../03-agent-workflow-rag/08-state-memory-context.md) · [3/09](../03-agent-workflow-rag/09-tools-and-mcp.md) · [3/10](../03-agent-workflow-rag/10-neuro-symbolic-reasoning.md) · [3/11](../03-agent-workflow-rag/11-decision-layer.md) · [3/12](../03-agent-workflow-rag/12-guardrails-hitl.md) · [3/13](../03-agent-workflow-rag/13-evaluation-rag-agents.md) · [3/14](../03-agent-workflow-rag/14-frameworks-landscape.md) | `invoke_agent`, `routing.decide`, `retrieval.*`, `generation.*`, `tool.invoke`, `verify.*`, `decision.decide`, `gate.evaluate`, `approval.request/resolve`, `memory.*`, `agent.step/delegate/handoff` |
+| Interaction | [4/01](../04-dynamic-ui/01-generative-ui-spectrum.md) · [4/02](../04-dynamic-ui/02-protocols-ag-ui-a2ui-mcp-apps.md) · [4/03](../04-dynamic-ui/03-component-registry-schema.md) · [4/04](../04-dynamic-ui/04-streaming-state-sync.md) · [4/05](../04-dynamic-ui/05-intent-to-ui-mapping.md) · [4/06](../04-dynamic-ui/06-hitl-ui-patterns.md) · [4/07](../04-dynamic-ui/07-frontend-integration.md) · [4/08](../04-dynamic-ui/08-security-sandboxing.md) · [4/09](../04-dynamic-ui/09-ux-accessibility.md) · [4/10](../04-dynamic-ui/10-evaluation-genui.md) | `ui.map`, `ui.validate`, `ui.stream`, `ui.render`, `ui.event`, `ui.event.verify`, `approval.display/decide` (프론트엔드 보고, 같은 `request_id`) |
+| 기반·종합 | [1/01](../01-foundations/01-llm-fundamentals.md) · [1/05](../01-foundations/05-agentic-protocols.md) · [1/06](../01-foundations/06-evaluation-observability.md) · [5/06 종합 매트릭스](06-operational-design-matrix.md) · 시나리오 [A](../07-appendix-scenarios/01-enterprise-document-qa.md)·[B](../07-appendix-scenarios/02-commerce-assistant-genui.md)·[C](../07-appendix-scenarios/03-ops-incident-agent.md)의 9.5절 | 모델 호출 `gen_ai.*` 매핑, `eval.run`, 프로토콜 속성 |
+
+읽는 법: 어떤 장애가 탐지되지 않았다면 ① 그 단계 페이지의 운영 안정성 표에서 "탐지 신호"를 찾고 ② 같은 페이지 관측성 소절에서 그 신호를 내는 스팬·지표가 있는지 확인한다. 없으면 그 페이지의 결함이고, 있는데 안 보였다면 이 페이지의 수집·매핑·샘플링 문제다.
+
 ## 아키텍처 / 파이프라인
 
 ```

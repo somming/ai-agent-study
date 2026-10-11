@@ -131,6 +131,13 @@ updated: 2026-10-11
 
 - **검증 수준** — 이 위키의 출처 표기. `[검증]` 독립 벤치마크·논문·표준 / `[벤더]` 벤더 주장 / `[2차]` 블로그·해설 / `[실측]` 우리 측정. `[벤더]`·`[2차]`만으로 "채택" 불가. → [작성 가이드](../_meta/writing-guide.md)
 - **레이더 위치** — 채택 / 시험 / 관찰 / 보류. 트렌드와 페이지의 `maturity`. → [03](03-trend-radar-2026.md)
+- **관측성** (observability) — 외부 신호(트레이스·지표·로그)만으로 내부 상태를 질문하고 답할 수 있는 성질. 에이전트에서는 "이 답은 어느 근거·판정·모델 버전으로 나왔나"를 요청 단위로 재구성. 탐지 통제의 기반. 설계 규약은 [1/07 관측성 설계 요소](../01-foundations/07-operations-vocabulary.md), 운영 도구는 [5/03](../05-cross-cutting/03-observability-tracing.md)
+- **스팬 계층** (span hierarchy) — session → turn → `invoke_agent` → 단계 스팬(`routing.decide`, `retrieval.search`, `generation.generate`, `tool.invoke`, `gate.evaluate`, `approval.request/resolve`, `ui.render`…) → 모델·툴 자식 스팬. 이름 규약 `<stage>.<operation>`. Knowledge 배치는 문서 단위 트레이스
+- **버전 키 5종** — 모든 스팬·레코드에 두는 `agent.model_version / prompt_version / index_version / rules_version / catalog_version`. 시점 재현성의 구현
+- **`agent.*` 속성** — 이 위키가 자체 정의하는 관측 속성 네임스페이스. OTel GenAI `gen_ai.*`는 Development 등급이라 매핑 계층을 거쳐 붙인다
+- **지표 3종** — RED(요청량·오류율·지연) / 품질(근거 부합률, 라우팅 정확도, 검증 통과율, 선택 정확도, 폴백·저하율) / 흐름·적체(큐 깊이, 승인 대기, 삭제 전파 지연, DLQ). 단계마다 세 종류를 두고 SLI에 연결
+- **대시보드 3장** — ① 사용자 관점 E2E ② 레이어·단계별 SLI ③ 비용·판정 분포(확신도 히스토그램, 결정 소스). 단계 페이지는 자기 패널 위치를 적는다
+- **증상 기반 알림** (symptom-based alerting) — 사용자가 겪는 것(렌더 실패, 승인 카드 미표시, 지연)을 알림 조건으로 우선하고 원인 기반은 보조. 런북 없는 알림은 만들지 않는다
 - **OTel GenAI 시맨틱 컨벤션** — OpenTelemetry의 LLM·에이전트 트레이스 속성 표준. 2026-10 현재 Development 등급. → [1/06](../01-foundations/06-evaluation-observability.md), [5/03](../05-cross-cutting/03-observability-tracing.md)
 - **`invoke_agent` 스팬** — OTel GenAI 컨벤션의 에이전트 호출 스팬. 아래에 모델·툴 호출 자식 스팬
 - **프롬프트 인젝션** (prompt injection) — 외부 입력(문서·툴 결과·UI 이벤트)에 담긴 지시가 모델 행동을 바꾸는 공격. 직접/간접. → [5/01](../05-cross-cutting/01-security-prompt-injection.md)

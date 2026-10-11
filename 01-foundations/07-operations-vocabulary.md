@@ -99,6 +99,57 @@ updated: 2026-10-11
 
 같은 트레이스에서 나오되 **저장소와 보존 정책을 분리**한다. 감사 추적에 필요한 필드는 설계 시 정한다. 나중에 "그때 어떤 프롬프트 버전이었나"를 복원할 수 없으면 감사 추적이 아니다. 상세: [1/06](06-evaluation-observability.md), [Part 5/03](../05-cross-cutting/03-observability-tracing.md)
 
+### 관측성 설계 요소 — 단계마다 무엇을 기록·측정·알림하는가
+
+**정의**: 관측성(observability)은 외부로 드러난 신호(트레이스·지표·로그)만으로 시스템 내부 상태를 **질문하고 답할 수 있는** 성질이다. 에이전트 시스템에서는 "이 답은 어느 근거로, 어느 판정을 거쳐, 어느 모델 버전이 만들었나"를 요청 하나 단위로 재구성할 수 있어야 한다. 탐지 통제의 기반이며, 각 단계 페이지의 운영 설계 "관측성" 소절이 아래 규약을 따른다.
+
+**① 스팬 계층과 이름 규약** — 한 사용자 턴은 하나의 트레이스다.
+
+```
+session
+└─ turn (request_id)
+   └─ invoke_agent {agent_name}                 ← OTel GenAI 컨벤션의 에이전트 스팬
+      ├─ routing.decide                          ← 결정 모델/분류기/규칙 판정
+      ├─ retrieval.search / retrieval.rerank / retrieval.assemble
+      ├─ generation.generate / generation.verify ← 모델 호출은 자식 스팬 (gen_ai.*)
+      ├─ tool.invoke {tool_name}                 ← MCP/함수 호출, 결과 요약만
+      ├─ gate.evaluate {gate_name}               ← 규칙 ∧ 모델, 출력 4종
+      ├─ approval.request → approval.resolve     ← 사람 승인 (이벤트 쌍)
+      └─ ui.map / ui.render / ui.event           ← Interaction 레이어, 프론트에서 보고
+```
+
+스팬 이름은 `<stage>.<operation>` 소문자, 단계 페이지의 `stage` 값과 맞춘다. Knowledge 파이프라인(배치)은 `ingest.*`, `index.*`, `sync.*` 스팬을 **문서 단위 트레이스**로 따로 둔다.
+
+**② 공통 속성** — 모든 스팬이 가져야 하는 최소 집합. 자체 속성은 `agent.*` 네임스페이스에 두고, OTel GenAI 속성(`gen_ai.*`)은 매핑 계층을 거쳐 붙인다(컨벤션이 Development 등급이라 이름이 바뀔 수 있음).
+
+| 속성군 | 속성 | 용도 |
+|---|---|---|
+| 식별 | `request_id`, `session_id`, `tenant_id`, `user_role_hash` | 테넌트·역할별 집계, 감사 연결. 사용자 ID 원문은 넣지 않음 |
+| **버전 키 5종** | `agent.model_version`, `agent.prompt_version`, `agent.index_version`, `agent.rules_version`, `agent.catalog_version` | 시점 재현성. 어느 조합이 이 결과를 냈는지 |
+| 결과 | `agent.outcome` (success / fallback / degraded / blocked / approval_required), `agent.degradation[]` | 저하·폴백·차단의 분포 |
+| 판정 | `agent.decision`, `agent.confidence`, `agent.decision_source` (rule / decision_model / classifier / llm) | 보정 곡선, 라우팅 정확도 |
+| 근거 | `agent.evidence_ids[]`, `agent.evidence_count` | 근거 추적, 삭제 전파 검증 |
+| 비용 | `gen_ai.usage.input_tokens / output_tokens`, `agent.cached_tokens`, `agent.cost_estimate` | 요청당 비용 분해 |
+| 지연 | 스팬 duration + `agent.queue_wait_ms` | 적체 vs 처리 분리 |
+
+**③ 지표 3종** — 단계마다 세 종류를 둔다.
+
+| 종류 | 예 | SLI와의 관계 |
+|---|---|---|
+| **RED** (요청량 · 오류율 · 지연) | 단계별 호출 수, 실패율, p50/p95/p99 | 가용성·지연 SLI의 직접 원천 |
+| **품질** | 근거 부합률(샘플), 라우팅 정확도, 검증 통과율·거부율, UI 선택 정확도, 폴백률, 저하 표시율 | 품질 SLI. 샘플링·judge 기반은 지연 반영 |
+| **흐름·적체** | 큐 깊이, 승인 대기 시간, 삭제 전파 지연, 재처리 DLQ 크기 | 전파·승인 SLI. 장애의 선행 신호 |
+
+**④ 본문·로그·샘플링·PII** — 메타데이터(속성·지표)는 **전수** 기록. 프롬프트·출력·검색 본문은 **opt-in**이며 별도 저장소에 두고 스팬에는 참조(해시·URI)만. 본문 샘플링은 예시 1~5%, 실패·폴백·차단·승인 건은 전수. PII는 수집 지점에서 마스킹하고 마스킹 여부를 속성으로 남긴다. 보존은 관측 로그 7~90일(예시), 감사 레코드는 별도 저장소·장기.
+
+**⑤ 알림 → 런북** — 알림마다 조건(SLI·임계값·지속 시간), 심각도(P1 즉시 호출 / P2 업무 시간 / P3 다음 리뷰), 런북 링크가 있어야 한다. 런북 없는 알림은 만들지 않는다. 알림은 **증상 기반**(사용자가 겪는 것)을 우선하고 원인 기반은 보조.
+
+**⑥ 대시보드 3장** — ① 사용자 관점 E2E(과업 완료율, E2E 지연, 폴백·저하율, 승인 대기) ② 레이어·단계별 SLI(RED + 품질) ③ 비용·판정 분포(모델 티어별 비용, 결정 소스 분포, 확신도 히스토그램, 토큰 캐시율). 단계 페이지는 자기 단계가 ②·③의 어느 패널에 나타나는지 적는다.
+
+**⑦ 감사 추적과의 분리** — 관측 스팬 중 감사 레코드로 넘어가는 필드(요청자·시각·판정·확신도·근거 ID·규칙 버전·승인자·실행 결과)를 단계마다 명시. 저장소·보존·접근 권한이 다르다([감사 추적과 관측성](#감사-추적-audit-trail과-관측성-observability) 참조).
+
+**판단 기준**: 운영 안정성 표의 모든 "탐지 신호"는 위 ①~③ 중 어느 스팬·속성·지표에서 나오는지 가리킬 수 있어야 한다. 가리킬 수 없으면 그 장애는 **탐지되지 않는다**.
+
 ### 통제의 세 층: 예방 · 탐지 · 교정
 
 | 층 | 수단 | 질문 |

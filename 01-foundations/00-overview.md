@@ -31,6 +31,7 @@ updated: 2026-10-11
 | [04 뉴로심볼릭 AI](04-neuro-symbolic-ai.md) | 신경망과 기호 추론을 결합하는 패턴은 몇 가지이고 각각 언제 쓰나? | Part 2/09, Part 3/04·10·12 |
 | [05 에이전트 프로토콜](05-agentic-protocols.md) | MCP·A2A·AG-UI·A2UI·MCP Apps는 각각 어느 레이어를 맡나? 경쟁인가 보완인가? | Part 3/07·09, Part 4/02 |
 | [06 평가와 관측성 기초](06-evaluation-observability.md) | 골든셋·LLM-as-judge·트레이싱을 어떤 순서로 갖추나? | Part 2~4의 평가 페이지, Part 5/03 |
+| [07 운영 용어와 판단 기준](07-operations-vocabulary.md) | 거버넌스·가드레일·게이트·감사는 무엇이 다른가? 위험 등급별로 어떤 통제가 필요한가? 지식·모델·규칙·환경 변화를 어느 추상화 경계에서 흡수하나? | 모든 단계 페이지의 "운영 설계" 섹션, Part 5 전체 |
 
 ## 이 Part에서 비교하는 기술
 
@@ -42,6 +43,7 @@ updated: 2026-10-11
 | 04 | 뉴로심볼릭 결합: Symbolic→Neural, Neural→Symbolic, Neural[Symbolic], Symbolic[Neural], Neural∪Symbolic 등 Kautz 분류 |
 | 05 | 프로토콜: MCP(툴·데이터) vs A2A(에이전트 간) vs AG-UI(프론트-백 이벤트) vs A2UI(선언적 UI) vs MCP Apps(샌드박스 앱) |
 | 06 | 평가: 규칙 기반 vs 참조 기반(정답셋) vs LLM-as-judge vs 사람 평가; 트레이싱: OTel GenAI 컨벤션 vs 벤더 전용 SDK |
+| 07 | 통제 수단: 코드 내 규칙 vs 정책 엔진 vs 가드레일 라이브러리 vs 결정 모델 게이트 vs 승인 워크플로우; 변화 흡수: 설정 교체 vs 버전 vs 어댑터 vs 재처리 |
 
 ## 최근 1년 트렌드가 이 Part에 미친 영향
 

@@ -18,6 +18,10 @@ AI Agent 시스템을 세 개의 레이어로 나누고, 각 레이어의 단계
 
 세 레이어에 공통인 기반 지식은 [Part 1. Foundations](01-foundations/00-overview.md), 레이어를 가로지르는 보안·비용·관측성·거버넌스는 [Part 5. Cross-cutting](05-cross-cutting/00-overview.md)에 둔다.
 
+### 운영을 전제로 한 설계
+
+모든 단계 페이지에는 **"운영 설계 — 확장성 · 안정성 · 유지보수"** 섹션이 있다. 10배 규모에서 무엇이 먼저 깨지는지, 장애 모드와 폴백, 버전·호환, **변화(지식·모델·규칙·사용자 환경·프로토콜)를 어느 추상화 경계에서 흡수하는지**, 위험 등급과 가드레일·승인·감사 접점을 단계마다 답한다. 용어와 판단 기준은 [Part 1/07](01-foundations/07-operations-vocabulary.md), 한 장 요약은 [Part 5/06](05-cross-cutting/06-operational-design-matrix.md).
+
 ### 트렌드를 다루는 방식
 
 최근 1년(2025-10 ~ 2026-10)에 각광받은 기술을 [Part 6. Trends](06-trends/00-overview.md)에서 심화하고, **그 단계의 선택지나 기본값을 실제로 바꾸는 트렌드만** 해당 단계 페이지의 "최신 트렌드 적용" 섹션에 적는다. 억지로 연결하지 않는다. 다음 세 주제는 특별히 깊게 다루는 관심 주제이며, 각각 의미가 있는 단계에서만 등장한다.
@@ -47,6 +51,7 @@ AI Agent 시스템을 세 개의 레이어로 나누고, 각 레이어의 단계
 - [04 뉴로심볼릭 AI](01-foundations/04-neuro-symbolic-ai.md)
 - [05 에이전트 프로토콜: MCP · A2A · AG-UI · A2UI · MCP Apps](01-foundations/05-agentic-protocols.md) `HTML`
 - [06 평가와 관측성 기초](01-foundations/06-evaluation-observability.md)
+- [07 운영 용어와 판단 기준: 거버넌스·가드레일·안정성·확장성·유지보수·변화 대응](01-foundations/07-operations-vocabulary.md)
 
 ### [Part 2. 데이터 파이프라인 및 근거 데이터 설계](02-data-pipeline/00-overview.md) `HTML`
 - [01 소스 수집과 문서 파싱](02-data-pipeline/01-source-ingestion.md)
@@ -97,6 +102,7 @@ AI Agent 시스템을 세 개의 레이어로 나누고, 각 레이어의 단계
 - [03 관측성과 트레이싱](05-cross-cutting/03-observability-tracing.md)
 - [04 거버넌스와 설명가능성](05-cross-cutting/04-governance-explainability.md)
 - [05 LLMOps / AgentOps](05-cross-cutting/05-llmops-agentops.md)
+- [06 운영 설계 종합 매트릭스: 단계 × 확장성·안정성·유지보수·변화 대응·거버넌스](05-cross-cutting/06-operational-design-matrix.md)
 
 ### [Part 6. Trends — 최근 1년 심화](06-trends/00-overview.md)
 - [온톨로지 르네상스 ★](06-trends/ontology-renaissance.md)

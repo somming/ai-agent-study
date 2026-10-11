@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI Agent 레퍼런스 아키텍처 (3-Layer)</title>
+<style>
+  /* 레이어 색상은 작성 가이드 7절과 동일하게 고정 */
+  :root {
+    --bg: #fafaf8; --fg: #1d1d1b; --muted: #6b6b6b; --line: #d9d9d4; --card: #ffffff;
+    --knowledge: #2E7D6B; --reasoning: #3A5FA8; --interaction: #B5651D; --cross: #6B6B6B;
+    --trend: #8E44AD;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #15161a; --fg: #ececea; --muted: #9a9a95; --line: #33353b; --card: #1e2026; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.5 -apple-system, "Pretendard", "Noto Sans KR", system-ui, sans-serif; }
+  header { padding: 20px 28px 8px; }
+  header h1 { margin: 0 0 4px; font-size: 20px; font-weight: 650; }
+  header p { margin: 0; color: var(--muted); }
+  .legend { display: flex; gap: 16px; flex-wrap: wrap; padding: 8px 28px 0; color: var(--muted); font-size: 12px; }
+  .legend span::before { content: ""; display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: -1px; background: var(--c); }
+  .wrap { padding: 12px 28px 28px; }
+  svg { width: 100%; height: auto; display: block; }
+  .layer-bg { fill: var(--card); stroke: var(--line); }
+  .layer-label { font-size: 13px; font-weight: 700; letter-spacing: .02em; }
+  .layer-sub { font-size: 11px; fill: var(--muted); }
+  .node { cursor: pointer; }
+  .node rect { fill: var(--card); stroke-width: 1.5; rx: 6; transition: transform .12s ease; }
+  .node text { font-size: 12px; fill: var(--fg); pointer-events: none; }
+  .node .idx { font-size: 10px; fill: var(--muted); }
+  .node:hover rect { filter: brightness(0.96); stroke-width: 2.5; }
+  .node.trend rect { stroke-dasharray: 4 3; }
+  .flow { stroke: var(--muted); stroke-width: 1.5; fill: none; marker-end: url(#arrow); }
+  .flow-label { font-size: 11px; fill: var(--muted); }
+  .contract { fill: var(--bg); stroke: var(--line); rx: 4; }
+  .contract-text { font-size: 11px; fill: var(--fg); }
+  #tip { position: fixed; pointer-events: none; background: var(--fg); color: var(--bg); padding: 6px 10px; border-radius: 6px; font-size: 12px; max-width: 320px; opacity: 0; transition: opacity .1s; z-index: 10; }
+  footer { padding: 0 28px 24px; color: var(--muted); font-size: 12px; }
+  footer a { color: inherit; }
+</style>
+</head>
+<body>
+<header>
+  <h1>AI Agent 레퍼런스 아키텍처 — 3-Layer</h1>
+  <p>노드를 클릭하면 해당 위키 페이지로 이동합니다. 점선 테두리는 최근 1년 트렌드가 새로 만든 단계입니다.</p>
+</header>
+<div class="legend">
+  <span style="--c: var(--interaction)">Interaction — 사람과 주고받기</span>
+  <span style="--c: var(--reasoning)">Reasoning / Action — 추론·행동</span>
+  <span style="--c: var(--knowledge)">Knowledge — 근거 데이터</span>
+  <span style="--c: var(--cross)">Cross-cutting — 횡단 관심사</span>
+  <span style="--c: var(--trend)">트렌드 세 축 (온톨로지 · 뉴로심볼릭 · 결정 모델)</span>
+</div>
+<div class="wrap">
+<svg id="arch" viewBox="0 0 1240 850" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="AI Agent 3계층 레퍼런스 아키텍처">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#6b6b6b"/>
+    </marker>
+  </defs>
+  <!-- 사용자 (레이어 박스 위쪽에 배치) -->
+  <g id="user" transform="translate(40,14)">
+    <circle cx="20" cy="12" r="10" fill="none" stroke="#6b6b6b" stroke-width="1.5"/>
+    <path d="M2,44 a18,18 0 0 1 36,0" fill="none" stroke="#6b6b6b" stroke-width="1.5"/>
+    <text x="52" y="30" font-size="13" fill="currentColor">사용자</text>
+  </g>
+</svg>
+</div>
+<div id="tip"></div>
+<footer>
+  레이어 간 계약: Knowledge→Reasoning은 <b>근거 단위(evidence) 스키마</b>, Reasoning→Interaction은 <b>렌더 가능한 응답 스키마</b>, Interaction→Reasoning은 <b>사용자 이벤트</b>. 상세는 <a href="../../00-overview/01-reference-architecture.md">01 레퍼런스 아키텍처</a>.
+</footer>
+
+<script>
+// ---- 데이터: 레이어와 노드 (링크는 assets/html/ 기준 상대 경로) ----
+const BASE = "../../";
+const LAYERS = [
+  { id: "interaction", label: "Interaction", sub: "Part 4 · 동적 UI 연동 — AG-UI / A2UI / MCP Apps", y: 90, h: 160, color: "var(--interaction)",
+    nodes: [
+      { t: "의도 → UI 매핑", i: "4/05", d: "어떤 컴포넌트를 띄울지 판정. 결정 모델·온톨로지 매핑 적용점", href: "04-dynamic-ui/05-intent-to-ui-mapping.md", trend: true },
+      { t: "컴포넌트 레지스트리", i: "4/03", d: "JSON Schema 기반 카탈로그, 디자인 시스템 연결", href: "04-dynamic-ui/03-component-registry-schema.md" },
+      { t: "스트리밍·상태 동기화", i: "4/04", d: "SSE / state patch / optimistic UI", href: "04-dynamic-ui/04-streaming-state-sync.md" },
+      { t: "HITL UI", i: "4/06", d: "승인·수정·피드백·citation 렌더", href: "04-dynamic-ui/06-hitl-ui-patterns.md" },
+      { t: "프론트엔드 렌더러", i: "4/07", d: "React/Next.js, CopilotKit, Flutter(A2UI), 네이티브", href: "04-dynamic-ui/07-frontend-integration.md" },
+      { t: "보안·샌드박싱", i: "4/08", d: "iframe 샌드박스, UI 경유 인젝션 방어", href: "04-dynamic-ui/08-security-sandboxing.md" },
+    ]},
+  { id: "reasoning", label: "Reasoning / Action", sub: "Part 3 · Agent 워크플로우 · LLM/RAG 파이프라인", y: 300, h: 250, color: "var(--reasoning)",
+    nodes: [
+      { t: "질의 이해·라우팅", i: "3/02", d: "재작성·분해·intent 분류. 결정 모델 라우팅 적용점", href: "03-agent-workflow-rag/02-query-understanding.md" },
+      { t: "검색·리랭킹", i: "3/03", d: "hybrid + RRF, cross-encoder, 그래프 탐색 결합", href: "03-agent-workflow-rag/03-retrieval-reranking.md" },
+      { t: "생성·근거 강제", i: "3/04", d: "citation 구조화 출력, 환각 가드", href: "03-agent-workflow-rag/04-generation-grounding.md" },
+      { t: "툴 / MCP", i: "3/09", d: "툴 스키마, MCP 서버, 멱등성, 권한", href: "03-agent-workflow-rag/09-tools-and-mcp.md" },
+      { t: "가드레일·HITL", i: "3/12", d: "정책 엔진, 승인 흐름, 게이팅", href: "03-agent-workflow-rag/12-guardrails-hitl.md" },
+    ],
+    row2: [
+      { t: "결정 레이어 (System One)", i: "3/11", d: "Jev · OpenAI Decisions API. 라우팅·게이팅·다음 행동·승인 필요 판정을 생성 없이", href: "03-agent-workflow-rag/11-decision-layer.md", trend: true },
+      { t: "뉴로심볼릭 검증기", i: "3/10", d: "LLM 출력 → 규칙·온톨로지·제약 솔버 검증", href: "03-agent-workflow-rag/10-neuro-symbolic-reasoning.md", trend: true },
+      { t: "상태·메모리·컨텍스트", i: "3/08", d: "체크포인트, 장기 메모리, compaction, 컨텍스트 엔지니어링", href: "03-agent-workflow-rag/08-state-memory-context.md" },
+      { t: "오케스트레이션", i: "3/07", d: "Supervisor / Hierarchical / Handoff, A2A", href: "03-agent-workflow-rag/07-multi-agent-orchestration.md" },
+      { t: "워크플로우 vs 에이전트", i: "3/05", d: "결정론과 자율성의 경계 결정", href: "03-agent-workflow-rag/05-workflow-vs-agent.md" },
+    ]},
+  { id: "knowledge", label: "Knowledge", sub: "Part 2 · 데이터 파이프라인 · 근거 데이터 설계", y: 600, h: 200, color: "var(--knowledge)",
+    nodes: [
+      { t: "수집·파싱", i: "2/01", d: "커넥터, CDC, 문서 파서, 멀티모달 추출", href: "02-data-pipeline/01-source-ingestion.md" },
+      { t: "청킹", i: "2/02", d: "late chunking / contextual retrieval / parent-child", href: "02-data-pipeline/02-chunking-strategies.md" },
+      { t: "메타·출처", i: "2/03", d: "W3C PROV, 버전, 권한, lineage", href: "02-data-pipeline/03-metadata-provenance.md" },
+      { t: "임베딩·인덱싱", i: "2/04", d: "dense / sparse / hybrid / multi-vector, 벡터DB", href: "02-data-pipeline/04-embedding-indexing.md" },
+      { t: "KG 구축", i: "2/05", d: "LLM 추출, 엔티티 해소, GraphRAG/LightRAG/HippoRAG", href: "02-data-pipeline/05-knowledge-graph-construction.md" },
+      { t: "온톨로지 모델링", i: "2/06", d: "비즈니스 온톨로지, 시맨틱 레이어, SHACL 검증", href: "02-data-pipeline/06-ontology-driven-modeling.md", trend: true },
+      { t: "근거 데이터 설계 ★", i: "2/08", d: "evidence 단위, citation 스키마, 신뢰도 등급", href: "02-data-pipeline/08-grounding-data-design.md" },
+      { t: "동기화·ACL", i: "2/07·10", d: "증분 인덱싱, 삭제 전파, ACL-aware retrieval", href: "02-data-pipeline/07-freshness-and-sync.md" },
+    ],
+    row2: [
+      { t: "파이프라인 내부의 AI", i: "2/09", d: "분류·정제·라벨링에 LLM vs 소형 모델 vs 결정 모델 vs 규칙", href: "02-data-pipeline/09-ai-inside-the-pipeline.md", trend: true },
+    ]},
+];
+const CROSS = { x: 1040, y: 90, w: 160, h: 710, color: "var(--cross)", nodes: [
+  { t: "보안·인젝션", d: "신뢰 경계, 입출력 필터, 권한 분리", href: "05-cross-cutting/01-security-prompt-injection.md" },
+  { t: "비용·지연·라우팅", d: "모델 라우팅, 캐싱, 결정 모델로 호출 절감", href: "05-cross-cutting/02-cost-latency-model-routing.md", trend: true },
+  { t: "관측성·트레이싱", d: "OTel GenAI 컨벤션, 벤더 SDK", href: "05-cross-cutting/03-observability-tracing.md" },
+  { t: "거버넌스·설명가능성", d: "EU AI Act, 감사 추적, 온톨로지 기반 설명", href: "05-cross-cutting/04-governance-explainability.md", trend: true },
+  { t: "LLMOps / AgentOps", d: "버전·평가·카나리·롤백", href: "05-cross-cutting/05-llmops-agentops.md" },
+]};
+
+// ---- 렌더 ----
+const svg = document.getElementById("arch");
+const NS = "http://www.w3.org/2000/svg";
+const tip = document.getElementById("tip");
+const LX = 40, LW = 980;   // 레이어 x, 너비
+
+function el(name, attrs, parent) {
+  const e = document.createElementNS(NS, name);
+  for (const k in attrs) e.setAttribute(k, attrs[k]);
+  (parent || svg).appendChild(e);
+  return e;
+}
+function text(x, y, str, cls, parent, anchor) {
+  const t = el("text", { x, y, class: cls || "", "text-anchor": anchor || "start" }, parent);
+  t.textContent = str; return t;
+}
+function node(n, x, y, w, h, color, parent) {
+  const g = el("g", { class: "node" + (n.trend ? " trend" : "") }, parent);
+  g.setAttribute("tabindex", "0"); g.setAttribute("role", "link");
+  el("rect", { x, y, width: w, height: h, stroke: n.trend ? "var(--trend)" : color }, g);
+  if (n.i) text(x + 8, y + 14, n.i, "idx", g);
+  // 두 줄 처리: 공백 기준으로 길면 분할
+  const words = n.t.split(" ");
+  if (n.t.length > 10 && words.length > 1) {
+    const mid = Math.ceil(words.length / 2);
+    text(x + 8, y + (n.i ? 32 : 24), words.slice(0, mid).join(" "), "", g);
+    text(x + 8, y + (n.i ? 48 : 40), words.slice(mid).join(" "), "", g);
+  } else {
+    text(x + 8, y + (n.i ? 34 : 26), n.t, "", g);
+  }
+  const go = () => { window.location.href = BASE + n.href; };
+  g.addEventListener("click", go);
+  g.addEventListener("keydown", e => { if (e.key === "Enter") go(); });
+  g.addEventListener("mousemove", e => { tip.textContent = n.d + "  →  " + n.href; tip.style.left = (e.clientX + 12) + "px"; tip.style.top = (e.clientY + 12) + "px"; tip.style.opacity = 1; });
+  g.addEventListener("mouseleave", () => tip.style.opacity = 0);
+  return g;
+}
+function layer(L) {
+  const g = el("g", { id: L.id });
+  el("rect", { x: LX, y: L.y, width: LW, height: L.h, class: "layer-bg", rx: 10 }, g);
+  el("rect", { x: LX, y: L.y, width: 6, height: L.h, fill: L.color, rx: 3 }, g);
+  text(LX + 18, L.y + 22, L.label, "layer-label", g).setAttribute("fill", L.color);
+  text(LX + 18, L.y + 40, L.sub, "layer-sub", g);
+  const gap = 10, pad = 18, top = L.y + 54;
+  const rowH = 58;
+  const place = (arr, y) => {
+    const w = (LW - pad * 2 - gap * (arr.length - 1)) / arr.length;
+    arr.forEach((n, k) => node(n, LX + pad + k * (w + gap), y, w, rowH, L.color, g));
+  };
+  place(L.nodes, top);
+  if (L.row2) place(L.row2, top + rowH + 12);
+  return g;
+}
+LAYERS.forEach(layer);
+
+// 횡단 관심사 세로 바
+(function () {
+  const g = el("g", { id: "cross" });
+  el("rect", { x: CROSS.x, y: CROSS.y, width: CROSS.w, height: CROSS.h, class: "layer-bg", rx: 10 }, g);
+  el("rect", { x: CROSS.x, y: CROSS.y, width: CROSS.w, height: 6, fill: CROSS.color, rx: 3 }, g);
+  text(CROSS.x + 12, CROSS.y + 28, "Cross-cutting", "layer-label", g).setAttribute("fill", CROSS.color);
+  text(CROSS.x + 12, CROSS.y + 46, "Part 5 · 횡단 관심사", "layer-sub", g);
+  const h = 92, gap = 14, w = CROSS.w - 24;
+  CROSS.nodes.forEach((n, k) => node(n, CROSS.x + 12, CROSS.y + 64 + k * (h + gap), w, h, CROSS.color, g));
+})();
+
+// 레이어 간 흐름 화살표와 계약 라벨
+function flow(x1, y1, x2, y2, label, lx, ly) {
+  el("path", { d: `M${x1},${y1} L${x2},${y2}`, class: "flow" });
+  if (label) {
+    const g = el("g", {});
+    const tw = label.length * 6.4 + 16;
+    el("rect", { x: lx - tw / 2, y: ly - 11, width: tw, height: 20, class: "contract" }, g);
+    text(lx, ly + 3, label, "contract-text", g, "middle");
+  }
+}
+// 사용자 → Interaction (레이어 위쪽에서 수평으로 들어감)
+flow(140, 44, 230, 44, "요청 · 행위 이벤트  ⇄  렌더된 UI", 330, 44);
+flow(330, 56, 330, 88, null);
+// Interaction ↓ Reasoning: 사용자 이벤트 / ↑ 렌더 가능한 응답
+flow(300, 250, 300, 300, "사용자 이벤트 → 상태 머신 입력", 300, 276);
+flow(760, 300, 760, 250, "렌더 가능한 응답 스키마 (텍스트 + citations + ui_intent)", 760, 276);
+// Knowledge ↑ Reasoning: 근거 단위
+flow(520, 600, 520, 550, "근거 단위(evidence) 스키마 + 인덱스 + 접근 정책", 520, 576);
+flow(220, 550, 220, 600, "질의 · 필터 · 그래프 탐색", 220, 576);
+
+// 하단 범례: 트렌드 세 축
+(function () {
+  const y = 826;
+  text(LX, y, "트렌드 세 축이 걸치는 자리: 온톨로지 → 2/06 · 2/05 · 3/10 · 4/05 · 5/04   |   뉴로심볼릭 → 2/09 · 3/04 · 3/10 · 3/12   |   결정 모델(Jev · Decisions API) → 2/09 · 3/02 · 3/11 · 3/12 · 4/05 · 5/02", "layer-sub");
+})();
+</script>
+</body>
+</html>

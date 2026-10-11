@@ -75,7 +75,6 @@ first_seen: 2026-03          # arXiv 2604.00555(2026-03) → Gartner NSAI 벤더
 | [Part 3/10 뉴로심볼릭 추론 적용](../03-agent-workflow-rag/10-neuro-symbolic-reasoning.md) | LLM 출력을 온톨로지 제약으로 검증(검증기 패턴) | 추출·답변이 행동의 근거가 될 때 |
 | [Part 4/05 의도 → UI 매핑](../04-dynamic-ui/05-intent-to-ui-mapping.md) | 컴포넌트 선택지·슬롯 값을 온톨로지 개념에서 생성 | 컴포넌트 레지스트리와 도메인 모델 동기화 필요 |
 | [Part 5/04 거버넌스·설명가능성](../05-cross-cutting/04-governance-explainability.md) | 근거 경로를 사람이 읽는 설명으로 | 규제·감사 요구 |
-| [Part 1/02 System 1 vs System 2](../01-foundations/02-system1-vs-system2.md) | 결정 모델의 선택지(enum)를 온톨로지 클래스에서 가져옴 | 온톨로지 + 결정 모델 동시 채택. 사례 미확인 `[2차]` |
 
 ## 한계와 미해결 질문
 

@@ -73,7 +73,6 @@ LLM을 운영에 넣은 조직이 공통으로 부딪힌 문제가 있다: **생
 | [Part 3/10 뉴로심볼릭 추론 적용](../03-agent-workflow-rag/10-neuro-symbolic-reasoning.md) | 네 패턴의 실제 배치 절차. 기호 체계 선택, 재생성 루프 상한 | 이 트렌드의 본거지 |
 | [Part 3/12 가드레일·HITL](../03-agent-workflow-rag/12-guardrails-hitl.md) | 게이트 패턴. 행동 직전 규칙 최종 허가, 확신 낮음 → 사람 | 행동하는 에이전트 |
 | [Part 1/03 지식 표현](../01-foundations/03-knowledge-representation.md) | 검증·접지의 기준 체계(온톨로지) | 온톨로지 보유 |
-| [Part 1/06 평가·관측성](../01-foundations/06-evaluation-observability.md) | 검증기 통과율·거부율이 핵심 지표 | 항상 |
 | [Part 4/03 컴포넌트 레지스트리와 스키마](../04-dynamic-ui/03-component-registry-schema.md) | LLM이 만든 UI 트리를 레지스트리 스키마로 검증 | Generative UI 채택 시 |
 
 ## 한계와 미해결 질문

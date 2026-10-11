@@ -172,7 +172,6 @@ GraphRAG(2024~)는 "LLM으로 문서에서 엔티티·관계를 뽑아 그래프
 |---|---|---|---|
 | 온톨로지 | 추출 스키마·정렬 기준·검증 규칙의 원천. GraphRAG가 온톨로지를 간과했다는 비판에 대한 직접 대응 | 그래프 구축 결정 시 사실상 필수 | `[2차]` 벤더 프레이밍 감안 — [Part 6/ontology-renaissance](../06-trends/ontology-renaissance.md) |
 | 뉴로심볼릭 | LLM 추출(신경) → SHACL/규칙 검증(기호) → 적재. 이 Part에서 가장 전형적인 뉴로심볼릭 적용점 | LLM 추출 사용 시 | `[2차]` 패턴 / 검증 기법 일반론은 Renkhoff et al. `[검증]` |
-| 결정 모델 (Jev / Decisions API) | 엔티티 해소의 "같은 것인가" 판정, 추출 트리플의 "근거에 부합하는가" 품질 판정 후보. 보정 확률로 사람 검토 큐 임계값 설정. 한국어 엔티티명 `[실측]` 선행 | 저확신 쌍이 수만 건 이상 | `[벤더]` 사례 미확인 — [09](09-ai-inside-the-pipeline.md) |
 | GraphRAG → LightRAG → HippoRAG 2 | 인덱싱 비용·증분·멀티홉의 경쟁. 재분석으로 벤치마크 해석이 보수화 | 위 비교표 | `[검증]` arXiv 2607.11683 / `[2차]` LightRAG |
 | 도메인 특화 GraphRAG | 법률 등 도메인에서 멀티에이전트 GraphRAG 보고(LegalGraphRAG) | 도메인 온톨로지 보유 | `[검증]` arXiv 2605.28120 |
 

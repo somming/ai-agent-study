@@ -88,9 +88,8 @@ first_seen: 2026-09          # Jev 얼리액세스(09-15)와 Decisions API 발�
 | [Part 3/12 가드레일·HITL](../03-agent-workflow-rag/12-guardrails-hitl.md) | 보정 확률 임계값으로 사람 승인 분기(Confidence-Routed HITL), 생성물 품질 판정(Generate → Judge) | 보정 곡선 `[실측]` 선행 |
 | [Part 4/05 의도 → UI 매핑](../04-dynamic-ui/05-intent-to-ui-mapping.md) | 레지스트리 컴포넌트 중 선택 | 컴포넌트 수가 닫혀 있음 |
 | [Part 5/02 비용·지연·모델 라우팅](../05-cross-cutting/02-cost-latency-model-routing.md) | 어느 모델·경로로 보낼지 결정하는 라우터 자체를 결정 모델로 | 라우팅 지연이 전체 지연에 포함됨 |
-| [Part 1/06 평가·관측성](../01-foundations/06-evaluation-observability.md) | 보정 곡선이 새 평가 항목. 저비용 온라인 judge 후보 | 결정 모델 채택 시 |
 
-각 페이지의 "최신 트렌드 적용" 섹션이 **그 단계에서 어떻게 쓰는지**를 다룬다. 적용되지 않는 단계는 해당 페이지가 "해당 없음 — 이유"로 적는다.
+각 페이지의 "최신 트렌드 적용" 섹션이 **그 단계에서 어떻게 쓰는지**를 다룬다. 위 표에 없는 단계에서는 다루지 않는다.
 
 ## 한계와 미해결 질문
 

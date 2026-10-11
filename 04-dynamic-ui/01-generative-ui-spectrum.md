@@ -135,9 +135,7 @@ Controlled와 Declarative의 경계는 "트리를 에이전트가 만드느냐"�
 
 | 트렌드 | 이 단계에서의 역할 | 적용 조건 | 검증 수준 |
 |---|---|---|---|
-| 온톨로지 | 통제 수준 결정의 입력. 도메인 개념(상품·주문·인시던트)이 온톨로지로 정리되어 있으면 "개념당 컴포넌트 하나"로 Controlled 카탈로그 범위를 추정할 수 있다 | 도메인 온톨로지 보유 | `[2차]` 사례 드묾 |
 | 뉴로심볼릭 | 자유도가 높은 패턴일수록 **검증기 패턴(Generate → Verify)** 이 필수. Declarative 트리와 Open-ended 생성물은 기호 검증기(스키마·제약·정책)를 통과해야 렌더 | Declarative · Open-ended | `[2차]` [Part 1/04](../01-foundations/04-neuro-symbolic-ai.md) |
-| 결정 모델 (Jev / Decisions API) | 이 단계 자체에는 해당 없음 — 통제 수준은 런타임 판정이 아니라 설계 결정. 다만 "이 요청은 Declarative 허용 의도인가"처럼 패턴을 런타임에 고를 때는 [05](05-intent-to-ui-mapping.md)의 판정 수단이 된다 | 의도 유형별 혼합 설계 | `[2차]` 적용 사례 미확인 |
 | 3패턴 정착 | CopilotKit의 Controlled / Declarative / Open-ended 정리가 업계 공통 어휘로 확산 | — | `[2차]` CopilotKit 자체 프레이밍 |
 | 모바일 렌더러 확산 | A2UI v0.9의 Android Jetpack 라이브러리·Flutter 렌더러로 Declarative의 적용 범위가 모바일로 | 모바일 네이티브 요구 | `[벤더]` |
 

@@ -149,9 +149,6 @@ Vercel AI SDK 류 풀스택 프레임워크는 "툴 호출 → React 컴포넌�
 
 | 트렌드 | 이 단계에서의 역할 | 적용 조건 | 검증 수준 |
 |---|---|---|---|
-| 온톨로지 | A2UI 컴포넌트 타입·AG-UI 툴(=컴포넌트) 이름·MCP Apps 툴 이름의 어휘를 온톨로지에서 생성하면 세 층 사이의 용어 불일치가 줄어든다 | 온톨로지 보유 | `[2차]` 사례 드묾 |
-| 뉴로심볼릭 | 프로토콜 경계가 곧 검증 지점. AG-UI 툴 호출 인자·A2UI 트리·MCP Apps 메시지를 스키마·규칙으로 검증한 뒤 렌더 | 항상 | `[2차]` |
-| 결정 모델 (Jev / Decisions API) | 해당 없음 — 프로토콜 선택은 설계 결정이지 런타임 판정이 아니다. 런타임의 "어느 컴포넌트" 판정은 [05](05-intent-to-ui-mapping.md) | — | — |
 | MCP 2026-07-28 개정 | MCP Apps가 확장으로 편입되며 "툴 프로토콜"이 UI까지 확장. 무상태 코어와의 조합에서 UI 상태를 누가 드는지 재설계 필요 | MCP Apps 채택 | `[2차]` 공식 changelog 재확인 권장 |
 | AG-UI 대형 벤더 지원 | Microsoft .NET SDK(2026-09-25), AWS Bedrock AgentCore(2026-03)로 .NET·AWS 스택에서 선택지가 됨 | 해당 스택 | `[2차]` `[벤더]` |
 | A2UI v0.9 | "Standard"→"Basic" 세트 개명, Agent SDK, Android Jetpack. 모바일 Declarative의 실질적 출발점 | 모바일 Declarative | `[벤더]` |

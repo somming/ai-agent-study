@@ -37,7 +37,7 @@ updated: 2026-10-11
 ## 지식 표현
 
 - **택소노미** (taxonomy) — 개념의 계층 분류(is-a, broader/narrower). 표준 SKOS. "찾게 한다". → [1/03](../01-foundations/03-knowledge-representation.md)
-- **온톨로지** (ontology) — 클래스·속성·관계·제약·공리의 형식 정의. 표준 OWL/RDFS, 제약 SHACL. "의미를 갖게 한다". 이 위키의 필수 주제 ★. → [1/03](../01-foundations/03-knowledge-representation.md), [2/06](../02-data-pipeline/06-ontology-driven-modeling.md)
+- **온톨로지** (ontology) — 클래스·속성·관계·제약·공리의 형식 정의. 표준 OWL/RDFS, 제약 SHACL. "의미를 갖게 한다". 이 위키의 관심 주제 ★. → [1/03](../01-foundations/03-knowledge-representation.md), [2/06](../02-data-pipeline/06-ontology-driven-modeling.md)
 - **지식그래프** (knowledge graph, KG) — 온톨로지에 따라 채워진 인스턴스·관계. RDF 트리플 또는 LPG. "연결되게 한다". → [2/05](../02-data-pipeline/05-knowledge-graph-construction.md)
 - **RDF / OWL / SHACL / SPARQL** — W3C 표준 스택. 트리플 데이터 모델 / 온톨로지 언어 / 그래프 형상 제약 / 질의 언어. → [1/03](../01-foundations/03-knowledge-representation.md)
 - **LPG** (Labeled Property Graph) — 노드·관계 모두 속성을 가지는 그래프 모델. Neo4j 류. 개발 편의·성능 우위, 추론·상호운용은 표준 스택 우위. → [1/03](../01-foundations/03-knowledge-representation.md)
@@ -47,7 +47,7 @@ updated: 2026-10-11
 
 ## 뉴로심볼릭
 
-- **뉴로심볼릭 AI** (neuro-symbolic AI) — 신경망(LLM 포함)과 기호 체계(규칙·온톨로지·논리·솔버·프로그램)의 결합 패턴 집합. 특정 기술이 아님. 이 위키의 필수 주제 ★. → [1/04](../01-foundations/04-neuro-symbolic-ai.md)
+- **뉴로심볼릭 AI** (neuro-symbolic AI) — 신경망(LLM 포함)과 기호 체계(규칙·온톨로지·논리·솔버·프로그램)의 결합 패턴 집합. 특정 기술이 아님. 이 위키의 관심 주제 ★. → [1/04](../01-foundations/04-neuro-symbolic-ai.md)
 - **Kautz 분류** — AAAI 2020에서 제시된 뉴로심볼릭 결합 유형 분류. 소스마다 5~6종. `A|B`(별개 모듈 통신), `A[B]`(내장). → [1/04](../01-foundations/04-neuro-symbolic-ai.md)
 - **검증기 패턴** (Generate → Verify) — LLM 출력을 스키마·SHACL·규칙·솔버가 검사하고 불합격 시 재생성·폴백. 실무에서 가장 흔한 뉴로심볼릭 패턴. → [1/04](../01-foundations/04-neuro-symbolic-ai.md), [3/10](../03-agent-workflow-rag/10-neuro-symbolic-reasoning.md)
 - **변환기 패턴** (Translate → Execute) — LLM이 자연어를 SQL·Cypher·SPARQL·코드로 변환하고 결정론적 엔진이 실행. 실행 결과가 근거. → [1/04](../01-foundations/04-neuro-symbolic-ai.md)

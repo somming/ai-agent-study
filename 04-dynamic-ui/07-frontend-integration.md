@@ -146,9 +146,6 @@ RSC 류 서버 렌더 스트리밍은 "컴포넌트를 클라이언트 번들에
 
 | 트렌드 | 이 단계에서의 역할 | 적용 조건 | 검증 수준 |
 |---|---|---|---|
-| 온톨로지 | 해당 없음 — 프레임워크 통합은 도메인 의미와 무관한 층. 온톨로지는 카탈로그([03](03-component-registry-schema.md))와 매핑([05](05-intent-to-ui-mapping.md))에서 소비된다 | — | — |
-| 뉴로심볼릭 | 렌더 직전의 스키마 검증(바인딩 계층)이 검증기 패턴의 마지막 관문. 서버 검증을 통과했어도 클라이언트가 한 번 더 확인하고 폴백 | 항상 | `[2차]` |
-| 결정 모델 (Jev / Decisions API) | 해당 없음 — 렌더러는 판정하지 않는다. 판정은 백엔드([05](05-intent-to-ui-mapping.md))에서 끝나 `ui_intent`로 도착한다 | — | — |
 | A2UI 모바일 렌더러 | v0.9의 Android Jetpack 라이브러리·Flutter 렌더러로 모바일 Declarative가 가능해짐 | 모바일 Declarative | `[벤더]` |
 | AG-UI 대형 벤더 SDK | Microsoft .NET SDK(2026-09-25), AWS Bedrock AgentCore(2026-03)로 백엔드 쪽 선택지 확대 → React 프론트의 백엔드 중립성 강화 | 해당 스택 | `[2차]` `[벤더]` |
 | MCP Apps 호스트 | 호스트(IDE·챗·자체 앱)가 서드파티 UI를 iframe으로 수용하는 모델이 표준화되는 중. CopilotKit 2026-01 지원 | 서드파티 툴 UI | `[2차]` |

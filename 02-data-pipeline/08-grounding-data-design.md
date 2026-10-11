@@ -233,6 +233,31 @@ SLI 후보: ① citation 필수 필드 완전성(노출된 근거 중 100%) ② 
 
 가장 자주 바뀌는 것: **지식**(문서 판·삭제) — 증분 재생성으로 흡수. 두 번째는 **규칙**(소스 등급·노출 정책)으로, 등급을 코드가 아니라 **설정 테이블 × 결정론 함수**로 두면 재색인 없이 배치 재계산으로 끝난다. 코드 밖 설정으로 둘 것: 등급 매트릭스, 소스 등급 택소노미, `evidence_type`별 필수 필드 목록, 상충 후보 블로킹 규칙, k 상한, 등급별 노출 정책(D 기본 제외 등). 포트·어댑터 뒤에 둘 외부 의존: NLI·판정 모델, 메타데이터 저장소, ACL 재확인 서비스, 문장 분할기. 시점 재현성: citation에 `doc_version`·`pipeline_version`·등급 규칙 버전이 있어 "그때 그 근거가 왜 B등급이었나"를 복원한다.
 
+### 관측성 — 이 단계에서 무엇을 기록·측정·알림하는가
+
+운영 안정성 표의 "탐지 신호"가 **실제로 어디서 나오는지**를 설계한다. 기준은 [Part 1/07 관측성 설계 요소](../01-foundations/07-operations-vocabulary.md)와 [Part 5/03](../05-cross-cutting/03-observability-tracing.md). 이 단계는 **두 시점**에 스팬을 낸다 — 색인 시 근거 단위 생성(`evidence.build`, 문서 트레이스)과 질의 시 citation 조립(`evidence.assemble`, Part 3 `retrieval.assemble`의 자식). 질의 시 스팬이 Part 2에서 유일하게 사용자 요청 트레이스에 직접 들어가므로, `request_id`·`agent.evidence_ids[]`·`agent.acl_checked`를 1/07 공통 속성 그대로 쓴다. citation `text` 본문은 스팬에 넣지 않고 `evidence_id`만 — 5/03의 "citation은 청크 ID를 그대로" 원칙이 트레이스 자동 검증(citation ⊂ 검색 결과)의 전제다.
+
+| 기록 대상 | 스팬 / 이벤트 (이름, 부모) | 핵심 속성 (버전 키 포함) | 지표 (→ 어느 SLI) | 샘플링 · 보존 · PII |
+|---|---|---|---|---|
+| 근거 단위 생성 (색인 시) | `evidence.build` (부모: 문서 트레이스 `ingest.fetch`) | `doc_id`, `doc_version`, `tenant_id`, `agent.pipeline_version`, `agent.citation_schema_version`, `agent.grade_rules_version`(→ `agent.rules_version`), `agent.source_grade_taxonomy_version`, `agent.sentence_splitter_version`, `agent.evidence_count{sentence,chunk,triple}`, `agent.chunk_fallback_count`(분할 실패 → 청크 단위), `agent.grade_distribution{A,B,C,D}`, `agent.outcome` | `evidence.build.chunk_fallback_ratio{doc_type}` → "한국어 문장 분할 실패", `evidence.build.sentence_len` 히스토그램 → "분할 결과 길이 이상치", `evidence.build.grade_distribution{source_grade,grade}` → "등급 분포"(택소노미 버전 변경 전후 diff = 등급 오산정 탐지) | 메타 전수. 문장 텍스트는 기록 금지(오프셋만) |
+| 상충 탐지 (색인 시) | `evidence.conflict` (부모 `evidence.build`), 내용 모순 판정은 자식 `evidence.conflict.nli`(`gen_ai.*` 또는 결정 모델 속성) | `agent.conflict_method`(metadata / nli / decision_model), `agent.conflict_model_version`, `agent.candidate_pairs`(블로킹 후), `agent.conflicts_found{revision,scope,content}`, `agent.confidence` 분포, `gen_ai.usage.*`, `agent.cost_estimate` | `evidence.conflict.errors` → "상충 탐지기 호출 오류율", `evidence.conflict.mode{nli,metadata_only}` 비율, `evidence.conflict.cost_per_1k_pairs` → 대시보드 ③ | 전수. 쌍의 텍스트는 기록 금지 |
+| locator 샘플 검증 | `evidence.verify` 배치 이벤트 (부모 없음, 대상 문서 트레이스에 링크) | `agent.sample_size`, `agent.locator_valid_count`, `agent.mismatch_evidence_ids[]`, `agent.parser.version`·`agent.chunk_version`(미갱신 경로 추적) | `evidence.verify.locator_valid_ratio` → **SLI ② locator 유효율**, 탐지 신호 "`text == original[locator]` 불일치율" — 01·02도 이 지표를 자기 버전 키로 분해해 읽음 | 일 1회(예시). 보존 90일 |
+| citation 조립 (질의 시) | `evidence.assemble` (부모: Part 3 `retrieval.assemble`), 자식 `evidence.assemble.meta_join` · `evidence.assemble.acl_check` · `evidence.assemble.conflict_lookup` | `request_id`, `tenant_id`, `agent.evidence_ids[]`, `agent.evidence_count{candidate,exposed,excluded}`, `agent.exclusion_reasons[]`(missing_field / meta_unavailable / acl_denied / grade_d), `agent.acl_checked`(bool, 요청 단위), `agent.subject_set_hash`, `agent.citation_schema_version`, `agent.grade_rules_version`, `agent.index_version`, `agent.cache_hit`, `agent.degradation[]`(`evidence_partial`, `conflict_check_metadata_only`), `agent.outcome`(success / degraded / blocked) | `evidence.assemble.errors{dependency}` → "조립 실패율·의존 서비스 오류율", `evidence.assemble.duration_ms{join}` → **SLI ③ 조립 p95**, "조인별 지연", `evidence.assemble.excluded_ratio{source,reason}` → "소스별 제외율", `evidence.assemble.zero_evidence` 카운터(근거 0건 → Part 3 신호), `evidence.assemble.acl_unchecked_exposed`(0이어야 함) → **SLI ① 필수 필드 완전성**의 보장 검증 | 메타 전수(사용자 턴 트레이스의 일부). 본문 없음. 사용자 ID 없음(`subject_set_hash`만). `blocked`·`degraded` 턴 100% |
+| 하류 정합성 (공유) | Part 3/04 검증기 스팬 (이 단계 소유 아님) | `agent.citation_schema_version`, `agent.evidence_type` | citation ⊂ 검색 결과 비율·검증기 통과율을 `citation_schema_version`·`evidence_type`으로 분해 → **SLI ④ 하류 정합성 통과율** | Part 3 정책 |
+
+질의 시 `evidence.assemble`은 사용자 턴 트레이스 안에 있으므로 샘플링 정책도 [Part 5/03](../05-cross-cutting/03-observability-tracing.md)의 턴 정책을 따른다 — 메타 100%, `blocked`(근거 0건)·`degraded`(partial·metadata_only) 턴은 100% 보존, citation `text`는 어떤 경우에도 스팬에 넣지 않고 `evidence_id`로 본문 저장소를 역참조한다.
+
+| 알림 | 조건 (예시) | 심각도 | 런북 (첫 3단계) |
+|---|---|---|---|
+| 근거 없는 답변 불가 (장애 모드: 메타데이터 저장소·ACL 서비스 다운) | `evidence.assemble.errors{dependency}` > 1%가 5분 지속, 또는 `zero_evidence` 비율 > 5% | P1 | ① 실패 의존(`meta` / `acl`)과 03·10 가용성 알림 대조 ② fail-closed 유지 확인(`acl_unchecked_exposed`=0) ③ Part 3에 "근거 확인 불가" 저하가 전달되는지 확인 후 온콜 |
+| 답변 지연 (장애 모드: 조립 지연 급증) | `evidence.assemble.duration_ms` p95 > 400ms(SLO 2배)가 5분 지속 | P2 | ① `{join}` 분해로 느린 조인(meta_join / acl_check / conflict_lookup) 식별 ② `evidence_partial` 저하가 작동하고 계약 ②로 전달되는지 확인 ③ 캐시 적중률·k 상한 조정 |
+| 특정 소스 근거 실종 (장애 모드: 필수 필드 누락 폭증) | `evidence.assemble.excluded_ratio{source,reason=missing_field}`가 7일 베이스라인 대비 +5%p 1시간 | P2 | ① 누락 필드 종류 확인 ② 03 `index.meta.gate` 규칙·스키마 버전 변경 이력 대조 ③ 상류 수정 후 영향 문서 근거 단위 재생성 |
+| 하이라이트 어긋남 (장애 모드: locator 불일치) | `evidence.verify.locator_valid_ratio` < 99.9%(일 샘플), 또는 UI 하이라이트 실패 신고 ≥ 3건/일 | P2 | ① 불일치 근거의 `parser.version`·`chunk_version`이 생성 시점과 다른지 확인 ② `locator_verified=false` 저하가 적용 중인지 확인 ③ 해당 문서 재처리 큐 투입 |
+| 등급 역전 (장애 모드: 등급 오산정) | 택소노미 버전 변경 후 `grade_distribution` diff에서 상향(비공식 → A) ≥ 1, 또는 샘플 감사·신고 1건 | P1 | ① 소스 등급 택소노미 변경 이력·승인 확인 ② 택소노미 롤백 후 배치 재계산 ③ 상향된 근거가 노출된 턴 범위를 `grade_rules_version`으로 산정 |
+| 저하 비율 급변 (장애 모드: 상충 탐지기 다운 · 한국어 문장 분할 실패) | `evidence.conflict.mode{metadata_only}` > 50%가 30분 지속, 또는 `evidence.build.chunk_fallback_ratio{doc_type}` > 20% | P3 | ① 탐지기 다운이면 고위험 컬렉션(규정·가격)을 등급 A·B만 노출로 전환 ② 분할 실패가 특정 문서 유형(목록·인용)에 집중되면 분할기 규칙 보강 ③ 복구 후 배치 재판정·재분할 |
+
+대시보드에서 이 단계를 보는 뷰: ② Knowledge 패널 — 조립 p95(조인별), 제외율(소스 × 사유), locator 유효율, 등급 분포(택소노미 버전별), 저하 플래그 비율; 질의 시 지표는 Retrieval 패널에 `citation_schema_version`으로도 표시 / ③ 비용 패널 — 상충 탐지(NLI) 호출 비용(1천 쌍당) / 감사 추적으로 넘기는 필드(관측 로그와 분리): 거버넌스 접점 표의 `evidence_id`·버전 3종·등급 + 규칙 버전 + 입력 요인·`conflicts_with` + 탐지 수단·`acl_checked` 결과 + 주체 집합 해시·저하 플래그 — 관측 스팬은 집계 가능한 ID·코드만 갖고, 근거별 등급 산정 입력 요인은 감사 저장소에 / 이 단계의 관측이 없으면 못 보는 장애: **비공식 문서가 A등급으로 노출되는 등급 오산정** — 등급은 결정론 함수라 오류 로그가 없고 조립도 성공으로 끝난다. `grade_distribution{source_grade,grade}`를 택소노미·규칙 버전별로 기록하지 않으면 사용자 신고 전까지 모른다.
+
 ### 거버넌스 접점 — 정책 · 가드레일 · 승인 · 감사
 
 | 항목 | 이 단계에서의 답 |
@@ -252,6 +277,8 @@ SLI 후보: ① citation 필수 필드 완전성(노출된 근거 중 100%) ② 
 - [ ] citation 스키마 변경이 추가 전용이고 Part 3·4와 계약 테스트가 CI에 있는가
 - [ ] 등급 매트릭스·소스 등급 택소노미가 코드 밖 설정이고 변경에 승인·시행일이 있는가
 - [ ] 한국어 문장 분할 실패 시 청크 단위 폴백이 자동인가
+- [ ] 운영 안정성 표의 탐지 신호마다 원천 스팬·지표(`evidence.assemble.errors{dependency}`, `duration_ms{join}`, `excluded_ratio{source,reason}`, `evidence.verify.locator_valid_ratio`, `grade_distribution` diff, `conflict.mode`, `chunk_fallback_ratio`)가 있고 `citation_schema_version`·`grade_rules_version`으로 분해되는가
+- [ ] 알림마다 런북이 있고, `evidence.assemble` 스팬이 `request_id`·`agent.evidence_ids[]`·`agent.acl_checked`를 1/07 공통 속성 그대로 갖는가
 
 ## 최신 트렌드 적용 (최근 1년)
 

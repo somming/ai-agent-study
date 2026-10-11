@@ -306,7 +306,47 @@ judge JSON 파싱 실패가 NaN으로 집계에서 조용히 빠지지 않도록
 
 보존 기간은 내부 감사 주기에 맞춰 예시 2년, append-only. 섀도 결정 모델 판정은 관측 트레이스에만 남긴다(운영 판정이 아니므로 감사 대상이 아님).
 
-### 9.5 운영 준비도 리뷰(ORR) 통과 조건
+### 9.5 관측 설계 — 한 요청을 끝까지 따라가는 트레이스
+
+4절의 질의 흐름 ①~⑩을 그대로 스팬 트리로 옮긴다. 규약은 [Part 1/07 관측성 설계 요소](../01-foundations/07-operations-vocabulary.md)와 [Part 5/03](../05-cross-cutting/03-observability-tracing.md), 알림 심각도는 1/07의 P1(즉시 호출)·P2(업무 시간)·P3(다음 리뷰). 이 시나리오의 관측이 답해야 할 질문은 하나다 — **"이 답에 인용된 근거가 그 시점 그 사용자의 권한 안이었고, 지금도 삭제되지 않았는가."** 그래서 공통 속성 중 `agent.evidence_ids[]`를 `(evidence_id, doc_version)` 쌍으로 남기고, 배치 쪽 삭제 레인의 문서 단위 트레이스와 **조인 가능**하게 두는 것이 설계의 중심이다. 모든 스팬에 버전 키 5종(`agent.model_version / prompt_version / index_version / rules_version / catalog_version`)과 번들 매니페스트 버전, `tenant_id`(단일이지만 처음부터), `user_role_hash`가 붙는다.
+
+| 구간 (레이어 → 단계) | 스팬 이름 | 반드시 남길 속성 | 이 시나리오 전용 지표 | 알림 → 런북 |
+|---|---|---|---|---|
+| ① Interaction → Reasoning · 질의 수신·그룹 해석 | `turn` (루트, `request_id`) → `invoke_agent {doc_qa}` | `session_id`, `agent.group_set_hash`, `agent.clearance_level`, 그룹 해석 지연·결과(ok / cached_ttl / failed), 버전 키 5종 | 그룹 해석 p95(2/10 ≤ 100ms), 캐시 TTL 경유 비율, E2E p95(9.1 답변 지연) | 그룹 해석 실패율 급증 → 9.2 ① 런북(fail-closed 확인, 저하 진입 통보) P2 |
+| ② Reasoning · 입력 가드레일 | `gate.evaluate {input}` | `agent.rules_version`, `rules_applied[]`(인젝션 패턴·범위 밖·길이 — rule_id·결과), `agent.outcome=blocked`일 때 사유 코드 | 차단률(사유별), 인젝션 패턴 적중 수 | 인젝션 차단 급증 → 패턴 사전 점검, 샘플 리뷰 P2 |
+| ③ Reasoning · 질의 이해·라우팅 | `routing.decide {route}` → 자식 `routing.shadow {decision_model}` | `agent.decision`(faq / doc_qa / out_of_scope / complex), `agent.confidence`, `agent.decision_source=classifier`, 질문 정의 버전, 재작성 발생, `agent.shadow_decision`·`agent.shadow_agreement`, 분해 하위 질의 수 | 세 갈래 비율, ECE(샘플 라벨), **섀도 불일치율**(분류기 ↔ 결정 모델), 분해 발생률 | 범위 밖 판정 비율 급변 → 9.1 ⑤ 런북(라우터 롤백·샘플 리뷰) P2 / 섀도 불일치율 급등 → 결정 모델 벤더 변경 확인 P3 |
+| ④ Reasoning → Knowledge · 검색 | `retrieval.search` → 자식 `retrieval.acl_filter`, `retrieval.rerank`, `retrieval.assemble` | `agent.index_version`, `agent.acl_mapping_version`, `agent.retrieval_mode`(hybrid / keyword_only), 필터 전후 후보 수, `agent.evidence_ids[]`(상위 k, `doc_version` 포함), `agent.excluded_by_acl_count`, 컷오프 점수 분포, `agent.degradation[]`(embedding_fallback · public_only), 임원 등급 경로 여부(self_hosted) | 벡터 검색 p95(2/04 ≤ 300ms), 0건 비율, 필터 후 결과 부족률, **`retrieval_mode=keyword_only` 비율**, **임원 등급 문서의 외부 API 경로 호출 건수(0)** | keyword_only 비율 임계 초과 10분 → 9.2 ② 런북 P2 / 외부 경로 1건 → 보안 사고 절차 **P1** |
+| ⑤ Reasoning · 생성 | `generation.generate` | 1/01 모델 호출 속성(해석된 모델 버전·프롬프트·스키마 버전·토큰·캐시·TTFT) + 문장 수, 인용된 `agent.evidence_ids[]`, `abstain` 플래그 | 첫 토큰 p95(9.1 ≤ 2초), 스키마 실패율, 문장당 인용 근거 수 분포 | 스키마 실패율 2배 15분 → 프롬프트-모델 호환 매트릭스 직전 셀로 롤백 P2 |
+| ⑥ Reasoning · 뉴로심볼릭 검증 | `generation.verify` → 자식 `gate.evaluate {citation_rules}`, `generation.nli` | `rules_applied[]`(citation 존재·권한 재확인·개정 상충·숫자 일치 — rule_id·version·결과), **`agent.cited_subset_of_retrieved`**(인용 ⊂ ④의 evidence_ids 자동 검증), **`agent.acl_recheck_blocked_count`**, NLI 통과·저확신 수, 재생성 횟수, `agent.outcome`(success / fallback→abstain) | 규칙 통과율, 재생성률(9.1 ≤ 10%), NLI 통과율(9.1 근거 부합률의 자동 프록시), **권한 재확인 차단 건수(0 — 1건이라도 ④ 사전 필터 결함)** | 권한 재확인 차단 ≥ 1 → 9.1 ③ 런북(컬렉션 킬 스위치 + 보안 사고 절차) **P1** / 재생성률 > 10% 1시간 → 9.1 ② 런북 P2 |
+| ⑦⑧ Reasoning → Interaction · 응답·렌더 | `ui.map`(규칙) + 프론트 보고 `ui.render {CitationList \| EvidenceHighlight \| OptionChips}` | `agent.catalog_version`, 컴포넌트 인스턴스 ID, `citations[]`(evidence_id 참조), `excluded_by_acl_count` 표시 여부, `degrade_mode` 배지 표시 여부, 하이라이트 오프셋 일치 여부, SSE 첫 델타 지연 | 첫 델타 p95(4/04), **하이라이트 어긋남률**(2/08 문장 분할 오류의 UI 측 관측), 저하 배지 표시율(9.1 ⑥ "저하 상태 표시 필수") | 저하 비율 1시간 중 20% 초과 → 9.1 ⑥ 런북(온콜) P2 / 저하인데 배지 미표시 → 설계 결함 P2 |
+| ⑨ Interaction → Reasoning · 피드백 | `ui.event {feedback}` (W3C 헤더로 `trace_id` 되돌림) | 이벤트 유형, 대상 응답 ID·citation ID, 이유 코드(근거 틀림 / 오래된 개정판 / 도움 됨), 컴포넌트 인스턴스 ID, 명확화 선택 시 재진입 여부 | 피드백 이유 분포(9.1 ⑤), **"오래된 개정판" 비율**, citation 클릭률, 명확화 후 재진입률 | "오래된 개정판" 비율 급증 → `superseded_by`·유효 시점 필터 점검 P3 / "근거 틀림" 급증 → 주간 리뷰 전수 전환 P2 |
+| ⑩ Knowledge(배치) · 삭제·ACL 전파 — 문서 단위 트레이스 | `sync.delete {doc_id}` → `index.tombstone`, `sync.acl_reflatten`, `sync.canary` | `doc_id`·`doc_version`, 레인(우선 / 일반), 계보 파생물 수(청크·벡터·parent·캐시·트레이스 본문)와 삭제 수, DLQ 체류 시간, 카나리 결과 | 삭제 레인 지연 p95(9.1 ④ ≤ 1시간), DLQ 크기, 대조 배치 유령 건수, **유령 인용 건수** = 삭제 완료 시각 이후의 ⑥ 스팬에 같은 `(evidence_id, doc_version)`이 인용된 수(0이 정상) | 삭제 레인 지연 초과 → 9.1 ④ 런북(신규 레인 정지·삭제 먼저) P2 / 카나리 실패 또는 유령 인용 ≥ 1 → 9.2 ③ 런북 **P1** |
+
+**이 시나리오의 차별점 — ACL·근거 ID·삭제 전파를 한 조인으로.** ④의 `evidence_ids[]`와 ⑥의 `cited_subset_of_retrieved`·`acl_recheck_blocked_count`, ⑩의 `sync.delete` 이벤트를 `(evidence_id, doc_version)`으로 조인하면 세 질문이 쿼리 하나씩이 된다 — "인용이 검색 결과 밖에서 왔는가"(⑥ 자동 검증), "권한 밖 근거가 섞였는가"(⑥ 차단 수 + 2/10 노출 방향 대조), "삭제된 문서가 아직 인용되는가"(⑩ 유령 인용). 9.2 ③의 탐지 원천은 톰스톤 카나리와 주 1회 대조 두 가지였는데, 이 조인이 **세 번째·가장 빠른 원천**이 된다. 섀도 결정 모델 판정(③)은 운영 경로에 영향이 없으므로 관측 트레이스에만 남기고 감사 레코드에는 넣지 않는다(9.4).
+
+**9.1 SLO → 측정 스팬·지표.**
+- ① 답변 p95 → `turn` duration + ④⑤⑦ 자식 스팬 분해표
+- ② 근거 부합률·재생성률 → ⑥ `generation.verify`
+- ③ 권한 밖 노출 0건 → ⑥ `acl_recheck_blocked_count` + ⑩ 카나리 + ④ 외부 경로 0건
+- ④ 신선도 → ⑩ 삭제 레인 지연·DLQ
+- ⑤ 완료율·abstain 정확도 → ③ 세 갈래·⑨ 이유 분포·⑥ abstain
+- ⑥ 가용성 → ④⑦의 `degradation[]`·배지 표시율
+
+**9.2 장애 → 탐지 신호.**
+- ① 권한 서비스 다운 → ①의 그룹 해석 실패 + ④ `degradation=public_only` 비율
+- ② 임베딩 API 다운 → ④ `retrieval_mode=keyword_only` + 임베딩 서킷 이벤트
+- ③ 삭제 미전파 → ⑩ 카나리·유령 건수·유령 인용 조인
+
+**대시보드 3장.**
+- ① 사용자 관점 E2E: 답변 p95(첫 토큰·총 분리), 과업 완료율·abstain 비율, 저하 모드 비율(keyword_only / public_only — 배지 표시율과 나란히), 피드백 이유 분포, **권한 밖 노출 카운터(상시 0, 큰 숫자 하나)**.
+- ② 레이어별 SLI: Knowledge — 검색 p95·0건율·필터 후 부족률·삭제 레인 지연·DLQ·카나리 상태·유령 인용(0); Reasoning — 라우팅 세 갈래·섀도 불일치율·규칙 통과율(규칙별)·재생성률·NLI 통과율·권한 재확인 차단(0); Interaction — 첫 델타 p95·하이라이트 어긋남률·저하 배지 표시율·citation 클릭률.
+- ③ 비용·판정 분포: 모델 티어별 비용을 **외부 API 경로 vs 자체 호스팅 경로로 분리**(임원 등급 반출 0의 비용 측 증거), 캐시 적중률(권한 범위가 키에 들어가 낮을 것을 전제), 라우팅 확신도 히스토그램, 분류기 × 섀도 결정 모델 일치 매트릭스, 야간 저하 구간의 비용 절감분.
+
+**감사 추적 저장소로 분리되는 필드와 보존.** 9.4 감사 필드 표의 전 블록(상관 키·요청자·판정·근거·규칙·게이트·버전)을 `trace_id` 기준으로 ①③④⑥ 스팬에서 추출해 별도 저장소에 append-only로 쓴다 — 본문 없음, `(evidence_id, doc_version)`으로 불변 버전을 참조, 보존 예시 2년(내부 감사 주기, 9.4). 관측 트레이스에만 남는 것: 지연·토큰·캐시·점수 분포·섀도 판정·하이라이트 오프셋·SSE 이벤트 수 — 메타데이터 보존 예시 30일, 실패·abstain·저확신·피드백·저하·ACL 차단 건은 90일. 본문 저장소(opt-in)는 예시 7일, 기밀 등급을 고려해 가장 짧다. 사용자 ID 원문은 어느 저장소에도 없다(`user_role_hash`·`group_set_hash`만).
+
+**샘플링 정책.** 메타데이터(속성·지표)는 전수. 본문(질의·생성 텍스트·검색 청크)은 opt-in이며 **공개 등급 문서만 인용된 턴**에 한해 예시 2% 샘플, 부서 한정 이상이 인용된 턴은 본문 기록 없이 `evidence_id` 참조만, **임원 한정 문서가 인용된 턴은 본문 기록 자체를 금지**(2/10 반출 불가 원칙을 관측 저장소에도 적용). 실패·abstain·저확신(θ 미만)·피드백·저하 모드·ACL 재확인 차단·인젝션 차단 건은 테일 샘플링으로 **턴 단위 전수** 보존(검색 스팬만 남고 UI 스팬이 빠지는 일이 없게 샘플링 결정은 `turn` 종료 시 한 번). 승인 흐름이 없으므로 "승인 건 전수" 규칙은 해당 없음 — 대신 ⑩ 삭제 레인 트레이스가 전수다.
+
+### 9.6 운영 준비도 리뷰(ORR) 통과 조건
 
 전사 공개(10주차) 전에 아래가 모두 체크되어야 한다. 세 레이어와 횡단 관심사를 모두 포함한다.
 
@@ -324,6 +364,8 @@ judge JSON 파싱 실패가 NaN으로 집계에서 조용히 빠지지 않도록
 - [ ] **[횡단]** 6개 E2E SLO의 대시보드와 알림이 있고, 각 알림에 한 장짜리 런북(지표 3개·스위치 1개·연락처 1명)이 연결되어 있다
 - [ ] **[횡단]** RACI의 모든 행에 A가 있고, 권한·기밀 관련 A가 팀 밖(보안 책임자·문서 소유 부서)에 지정되어 있다
 - [ ] **[횡단]** 기술 부채가 기록되어 있다 — "ACL은 메타데이터 필터, 쿼리 시 실시간 그룹 해석은 2차", "NLI 검증기는 faithfulness 측정 후", "그래프·온톨로지 보류"
+- [ ] **[횡단]** 한 턴의 트레이스에서 `turn → routing.decide → retrieval.search(evidence_ids) → generation.verify(인용 ⊂ 검색, 권한 재확인) → ui.render → ui.event(feedback)`가 같은 trace_id로 끊김 없이 보이고, 섀도 결정 모델 판정이 자식 스팬으로 함께 남되 감사 레코드에는 들어가지 않는다
+- [ ] **[횡단]** 삭제 레인 `sync.delete` 이벤트와 답변 트레이스의 `(evidence_id, doc_version)`을 조인하는 "삭제 후 인용" 쿼리와 임원 등급 외부 경로 호출 카운터가 대시보드에 상시 0으로 표시되고, 1건이라도 P1 알림이 울린다
 
 관련: [Part 7 개요](00-overview.md) · [시나리오 B](02-commerce-assistant-genui.md) · [시나리오 C](03-ops-incident-agent.md) · [레퍼런스 아키텍처](../00-overview/01-reference-architecture.md) · [Part 6/decision-models](../06-trends/decision-models.md) · [Part 6/ontology-renaissance](../06-trends/ontology-renaissance.md) · [Part 6/neuro-symbolic](../06-trends/neuro-symbolic.md)
 

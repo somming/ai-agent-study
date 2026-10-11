@@ -203,6 +203,31 @@ SLI 후보: 요청당 LLM 호출 수 분포(p50/p95), 스텝 상한 도달률, E
 
 가장 자주 바뀌는 것: 상한·임계값·노드 프롬프트(주 단위) > 경로 추가(월) > 노드 모델(분기) > 자율성 수준 승격 > 프레임워크. 코드 밖 설정으로 둘 것: 라우팅 표·θ, 상한 5종, 종료 조건, 노드 프롬프트, 노드별 모델 배정, 자율성 피처 플래그. 포트·어댑터 뒤에 둘 외부 의존: 모델 API, 결정 모델, 툴/MCP, 체크포인트 저장소, 프레임워크 런타임.
 
+### 관측성 — 이 단계에서 무엇을 기록·측정·알림하는가
+
+운영 안정성의 "탐지 신호"가 **실제로 어디서 나오는지**를 설계한다. 기준은 [Part 1/07 관측성 설계 요소](../01-foundations/07-operations-vocabulary.md)와 [Part 5/03](../05-cross-cutting/03-observability-tracing.md). 두 구간의 관측 단위가 다르다 — **워크플로우는 노드마다 스팬**(`workflow.node {name}`), **에이전트 구간은 스텝마다 스팬**(`agent.step {n}`). 같은 요청 안에서 두 종류가 섞이므로 구간 경계 속성(`agent.segment`=workflow/agent)을 모든 스팬에 붙여 구간별로 분해할 수 있어야 한다.
+
+| 기록 대상 | 스팬 / 이벤트 (이름, 부모) | 핵심 속성 (버전 키 포함) | 지표 (→ 어느 SLI) | 샘플링 · 보존 · PII |
+|---|---|---|---|---|
+| 워크플로우 노드 | `workflow.node {name}` (부모 `invoke_agent`); 모델 호출은 자식 `generation.generate` + `gen_ai.*`, 툴은 `tool.invoke {tool}` | `agent.graph_version`(실행 그래프), `agent.node_kind`(llm/rule/decision/tool/code_gate), `agent.prompt_version`·`agent.model_version`(노드별), `agent.skipped`(필수 아닌 노드 생략), `agent.outcome`=fallback, `agent.circuit_state` | 노드별 RED(호출 수·오류율·p95), 노드 생략률, **E2E p95(구간별)** → 모델 API 다운(노드) | 메타 전수, 노드 입출력 본문 opt-in |
+| 분기 판정 | `routing.decide {branch}` (부모 `workflow.node`) | `agent.decision`, `agent.confidence`, `agent.decision_source`, `agent.threshold`, 질문 정의 버전 | 경로별 요청 비율, 경로별 비용·품질(골든셋 샘플), 확신도 히스토그램 → 라우팅 오분류 | 메타 전수, 저확신 건 본문 전수 |
+| 에이전트 구간 루프 | `agent.step {n}` (부모 `invoke_agent`, `agent.segment`=agent); 턴 종료 시 루트에 `agent.step_count` | `agent.state_hash`, `agent.no_progress_count`(동일 해시 반복), `agent.limit_hit`(step/cost/time/iteration/depth), `agent.outcome`=degraded, `agent.degradation[]`=`partial`·`workflow_fallback`, 스텝별 토큰 | **요청당 LLM 호출 수 분포(p50/p95)**, **스텝 상한 도달률**, 진행 없음 감지율, 워크플로우 폴백률, **폴백·저하율** → 무한 루프·상한 도달 | 메타 전수, 상한 도달·폴백 트래젝토리 본문 전수(골든셋 환류) |
+| 패턴 전용 | 평가자-최적화 `agent.iteration {n}`; 오케스트레이터 `workflow.decompose` + 하위 `workflow.node worker`; 병렬 `workflow.parallel` + 섹션 자식; 투표 `workflow.vote` | `agent.score`·`agent.converged`; 분해 스키마 검증 결과·`agent.worker_count`; `agent.section_status`(ok/failed/omitted); `agent.vote_ratio` | 반복 수 분포·**비수렴률**, 분해 스키마 실패율, 섹션별 성공률·누락 포함 응답 비율, 과반 미달 abstain율 → 비수렴, 분해 실패, 병렬 부분 실패 | 메타 전수 |
+| 체크포인트 | 이벤트 `checkpoint.save` / `checkpoint.resume` (부모 `invoke_agent`) | `agent.checkpoint_id`, 스키마 버전, 크기, `agent.resumed`, "실행 완료" 기록 히트(중복 실행 차단), 저장소 오류 코드 | 체크포인트 저장소 오류율·p95, 재개 성공률, 중복 실행 차단 건수, 접수 거부(백프레셔) 건수 → 체크포인트 저장소 다운 | 전수, 상태 본문은 저장소에만(스팬에는 ID) |
+| 행동 게이트·승인 (에이전트 구간) | `gate.evaluate action_policy` → `approval.request` / `approval.resolve` (부모 `agent.step`) | `agent.risk_level`, `agent.rules_version`, 게이트 출력 4종, 승인 결과(approved/rejected/expired), `agent.queue_wait_ms` | 차단률, 승인 요청률, 승인 대기 p95, 만료=거부 비율 (상세 [06](06-agent-design-patterns.md)·[12](12-guardrails-hitl.md)) | 전수 |
+
+| 알림 | 조건 (예시) | 심각도 | 런북 (첫 3단계) |
+|---|---|---|---|
+| 노드 폴백 급증 | 특정 노드 `agent.outcome=fallback` 비율 10분간 50% 초과, 또는 노드 서킷 열림 | P1 | ① 노드별 서킷·벤더 상태 확인 ② 노드 폴백 모델이 호환 매트릭스 안인지, 생략 노드가 필수 아닌지 확인 ③ 체크포인트 재개 대기 건수 확인, 적체 시 장기 과업 접수 제한 |
+| 상한 도달·진행 없음 | `agent.limit_hit` 비율 5% 초과, 또는 `no_progress_count` ≥ N(예시 3) 비율 급증 | P2 | ① 패턴·경로·테넌트별로 분해해 특정 구간인지 확인 ② 종료 조건·시스템 프롬프트·모델 버전의 최근 변경 확인 ③ 지속 시 에이전트 구간 킬 스위치(워크플로우 폴백 플래그) 검토 |
+| 비수렴·분해 실패 | 비수렴률 10% 초과, 또는 분해 스키마 실패율 5% 초과 | P2 | ① 평가 기준·분해 스키마·모델 버전 변경 이력 확인 ② 상한에서 반환된 "최고 점수 결과"의 품질 샘플 확인 ③ 반복·워커 상한 임시 하향 |
+| 체크포인트 저장소 장애 | 저장소 오류율 > 0(즉시) | P1 | ① 저장소 상태·용량 확인 ② 장기 과업 접수 거부(백프레셔)와 단기 과업 "재개 불가" 표시가 동작하는지 확인 ③ 진행 중 세션 수와 유실 범위 산정 |
+| 분포 이상 | 경로별 비율 베이스라인 ±50%, 또는 특정 섹션 성공률 하락 지속 | P3 | ① 분기 확신도 히스토그램·θ 변경 확인([02](02-query-understanding.md)) ② 해당 섹션 노드의 프롬프트·모델 버전 확인 ③ 경로별 비용·품질 샘플 재측정 |
+
+대시보드에서 이 단계를 보는 뷰: ① E2E — **구간별(workflow/agent) p95·폴백·저하율**, 과업 성공률 / ② Reasoning 패널 — 노드별 RED, 스텝 수 분포, 상한 도달률, 비수렴률, 승인 대기 / ③ 비용·판정 분포 — 요청당 호출 수의 **p95 vs 평균**(워크플로우는 고정, 에이전트 구간은 꼬리), 분기 확신도 히스토그램, 결정 소스 분포.
+감사 추적으로 넘기는 필드(관측 로그와 분리): 실행 그래프 버전, 노드별 프롬프트·모델 버전, 분기 판정·확신도·수단, 스텝·호출 수·토큰, 상한 도달·폴백 여부, 행동 게이트 판정·규칙 버전, 승인자·시각·승인 카드 내용, 체크포인트 ID, 근거 ID — 거버넌스 접점 표와 동일.
+이 단계의 관측이 없으면 못 보는 장애: **에이전트 구간의 p95 꼬리** — 평균 비용·성공률은 정상인데 상위 5%(예시) 요청이 상한까지 돌며 전체 비용의 절반을 쓴다. 스텝 스팬 없이 요청당 호출 수를 평균으로만 보면 "비용이 왜 늘었나"에 답할 수 없고, 워크플로우 승격·강등 결정의 근거도 없다. 그리고 **재개 시 중복 실행** — "실행 완료" 기록 히트를 세지 않으면 쓰기 툴이 두 번 실행된 사실은 외부 시스템에서 먼저 발견된다.
+
 ### 거버넌스 접점 — 정책 · 가드레일 · 승인 · 감사
 
 | 항목 | 이 단계에서의 답 |
@@ -221,6 +246,8 @@ SLI 후보: 요청당 LLM 호출 수 분포(p50/p95), 스텝 상한 도달률, E
 - [ ] 실행 그래프 정의가 프레임워크 중립 형식으로 런타임 밖에 있는가
 - [ ] 등급 3 이상 행동 노드에 규칙 게이트 + 승인 경로(만료 = 거부)가 있는가
 - [ ] 트레이스에 분기 판정·버전 키·체크포인트 ID가 있어 실패 경로를 재구성할 수 있는가
+- [ ] 모든 스팬에 `agent.segment`(workflow/agent)가 있어 구간별 p95·요청당 호출 수 분포를 분해할 수 있고, 알림이 평균이 아닌 p95·분포에 걸려 있는가
+- [ ] `checkpoint.resume`에 "실행 완료" 기록 히트가 남아 중복 실행 차단 건수를 셀 수 있는가
 
 ## 최신 트렌드 적용 (최근 1년)
 

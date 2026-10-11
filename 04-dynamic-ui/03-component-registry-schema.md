@@ -241,6 +241,31 @@ SLI 후보: 스키마 검증 실패율(컴포넌트별), 카탈로그 대조 실
 
 가장 자주 바뀌는 것: **컴포넌트 추가·props 선택 필드 추가**(주 단위) > 디자인 토큰 > 폐기 > 봉투(거의 안 바뀜). 코드 밖 설정으로 둘 것: 카탈로그 파일, 토큰 세트, 지원 매트릭스, deprecated 목록. 스키마 진화 규칙을 계약 ②에 적용하면: 봉투에 필드 추가는 자유(프론트는 모르는 필드 무시), `ui_intent` 구조 변경은 봉투 버전 상승, `text`는 영구 필수.
 
+### 관측성 — 이 단계에서 무엇을 기록·측정·알림하는가
+
+운영 안정성의 "탐지 신호"가 **실제로 어디서 나오는지**를 설계한다. 기준은 [Part 1/07 관측성 설계 요소](../01-foundations/07-operations-vocabulary.md)와 [Part 5/03](../05-cross-cutting/03-observability-tracing.md). 카탈로그는 버전 키 5종 중 `agent.catalog_version`의 원천이고, 이 페이지의 관측은 **서버가 아는 버전과 클라이언트가 가진 버전이 같은가**를 요청 단위로 대조하는 데서 시작한다.
+
+| 기록 대상 | 스팬 / 이벤트 (이름, 부모) | 핵심 속성 (버전 키 포함) | 지표 (→ 어느 SLI) | 샘플링 · 보존 · PII |
+|---|---|---|---|---|
+| 스키마·카탈로그·제약 검증 | `ui.validate` (부모 `ui.map`), `agent.validator=props_schema / catalog / constraint` | `agent.component`·컴포넌트 버전, `agent.catalog_version`, `agent.validation_result`, `agent.failure_code`(`schema_invalid` / `unknown_name` / `constraint_min_items` 등 닫힌 enum), `agent.model_version`·`agent.prompt_version` | 스키마 검증 실패율(컴포넌트별), 운영 중 카탈로그 대조 실패 건수, 제약 검증 실패율 → [10](10-evaluation-genui.md) ② 렌더 층 | 메타 전수. 실패한 `ui_intent` 본문은 opt-in 참조(마스킹) |
+| 버전 불일치 | 클라이언트 보고 `ui.render {component}`의 `agent.catalog_version_client` vs 서버 `agent.catalog_version` | 메이저·마이너 차, `agent.fallback_reason`(`catalog_major_mismatch` / `unknown_component`), `agent.renderer_version`, 배포 마커 | 버전 불일치 비율(메이저 / 마이너), 불일치 지속 시간 | 전수 |
+| `degradation[]` 수신·표시 | 봉투 수신 시 `ui.map`에 `agent.degradation[]`(위 매핑표의 코드) / 클라이언트 `ui.render {notice}`에 `agent.degradation_displayed[]` | 코드 값, 발생 레이어(코드로 유도), 고지 토큰 키 | 코드별 수신 건수, 저하 플래그 표시율(수신 ∩ 표시 / 수신) | 전수 — 샘플링하면 표시율 분모가 깨진다 |
+| 노출 중단 플래그 | 이벤트 `ui.map.exposure_flag` (플래그 변경 시) + `ui.map`의 `agent.fallback_reason=component_disabled` | 컴포넌트, 플래그 상태, 변경 주체 해시 | 플래그로 인한 폴백 건수 — 스키마 실패 폴백과 분리해야 "실패율이 떨어진 이유"가 보인다 | 전수 |
+| 디자인 토큰 로드 | 클라이언트 이벤트 `ui.render.token_load` (부모 `ui.render`) | `tenant_id`, 토큰 세트 버전, 결과(ok / `fallback_default`) | 토큰 로드 실패율(테넌트별) | 실패 전수 |
+| 생성 파이프라인 | 런타임 밖 — CI의 생성물 diff·대조 결과를 `agent.catalog_version` 변경 시각의 배포 마커로 트레이스에 잇는다 | — | 배포 마커 전후 실패율 단절 | — |
+
+| 알림 | 조건 (예시) | 심각도 | 런북 (첫 3단계) |
+|---|---|---|---|
+| 스키마 실패 폭증 | 컴포넌트별 실패율 > 예시 5%, 15분 | P2 | ① `failure_code` × 컴포넌트 분해 ② 모델·프롬프트 버전 변경 확인 ③ 컴포넌트 노출 중단 플래그 → 롤백 판단 |
+| 운영 중 카탈로그 대조 실패 | `unknown_name` ≥ 1건 | P2 | ① 서버·클라이언트 `catalog_version` 비교 ② 배포 순서 확인 ③ 생성물 수동 수정 흔적 확인(절차 결함) |
+| 메이저 불일치 지속 | 메이저 불일치 비율 > 0이 배포 창(예시 30분) 초과 | **P1** (전체 텍스트) | ① 어느 쪽이 구버전인지 ② 새로고침 안내 배너 발행 확인 ③ 배포 완료 또는 롤백 |
+| 토큰 로드 실패 | 테넌트별 > 예시 1%, 10분 | P3 | ① 테넌트·세트 버전 ② 기본 토큰 저하 확인 ③ 디자인 시스템 팀 |
+| 의미적으로 빈 UI | 컴포넌트별 제약 실패율 > 예시 3%, 1시간 | P3 | ① 데이터 형태 샘플 ② 매핑 조건 보강([05](05-intent-to-ui-mapping.md)) ③ 골든셋 추가 |
+
+**대시보드에서 이 단계를 보는 뷰**: ① E2E 폴백율의 원인 분해(schema / unknown / mismatch) / ② Interaction 패널의 "컴포넌트별 스키마 실패율·버전 불일치·`degradation[]` 코드별 수신 vs 표시".
+**감사 추적으로 넘기는 필드(관측 로그와 분리)**: 응답별 `catalog_version`, 선택 컴포넌트 `name`·`version`, 검증 결과 코드, 폴백 여부. 카탈로그 버전별 스냅샷은 감사 저장소에 보존해 과거 응답을 재검증한다.
+**이 단계의 관측이 없으면 못 보는 장애**: 마이너 불일치. 신규 컴포넌트만 구 프론트에서 조용히 텍스트가 되는데 서버는 성공, 클라이언트도 "폴백 성공"이다 — `catalog_version_client` 대조 없이는 배포가 끝났다고 믿게 된다.
+
 ### 거버넌스 접점 — 정책 · 가드레일 · 승인 · 감사
 
 | 항목 | 이 단계에서의 답 |
@@ -259,6 +284,8 @@ SLI 후보: 스키마 검증 실패율(컴포넌트별), 카탈로그 대조 실
 - [ ] 폐기 절차(deprecated 기간·대체 컴포넌트·텍스트 폴백)가 문서화돼 있는가
 - [ ] 카탈로그 변경 PR이 골든셋·매핑 테이블 변경을 포함하도록 강제되는가
 - [ ] 과거 `catalog_version`으로 당시 응답을 재검증할 수 있는가(버전별 스냅샷)
+- [ ] 클라이언트 렌더 보고에 `catalog_version_client`가 있어 마이너 불일치 폴백이 집계되는가
+- [ ] `degradation[]` 코드별 수신 건수와 표시 건수가 샘플링 없이 집계되는가
 
 ## 최신 트렌드 적용 (최근 1년)
 

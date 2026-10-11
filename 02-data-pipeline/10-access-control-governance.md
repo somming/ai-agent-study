@@ -225,6 +225,32 @@ SLI 후보: ① 권한 대조 불일치 건수(노출 방향 = 0 목표) ② 누
 
 가장 자주 바뀌는 것: **사용자 환경**(멤버·그룹·조직) — 이것을 재색인 없이 흡수하려면 **청크에 사용자가 아닌 그룹 ID를 두고 해석을 질의 시로 미루는** 설계가 전제다. 두 번째는 **규칙·정책**이며, 정책을 코드가 아닌 **시행일 있는 테이블**로 두면 규제 변경이 배포가 아니라 설정 교체 + 테스트가 된다. 권한 회수의 **전파 대상**에는 인덱스 메타데이터뿐 아니라 Reasoning의 결과·시맨틱 캐시([Part 3/01](../03-agent-workflow-rag/01-rag-architecture-patterns.md)·[Part 3/03](../03-agent-workflow-rag/03-retrieval-reranking.md)·[Part 5/02](../05-cross-cutting/02-cost-latency-model-routing.md))가 포함된다. 회수의 시간 상한을 캐시에도 걸기 위해 ① 캐시 키에 **주체 집합 해시**(subject-set hash)를 포함하고, ② 캐시 TTL ≤ 주체 해석 TTL(위 예시 5분)로 묶으며, ③ `acl`·톰스톤 이벤트가 [07](07-freshness-and-sync.md) 변경 큐를 통해 캐시 무효화를 트리거한다. 캐시된 답변의 citation에도 [08](08-grounding-data-design.md)의 `acl_checked` 비영속 원칙이 적용된다(불균형 ② 반영). 코드 밖 설정으로 둘 것: 정책 테이블, 테넌트 레지스트리, 소스 ACL 매핑, 그룹 매핑, PII 패턴, 마스킹 방식표, 캐시 TTL(주체 해석·Reasoning 캐시 공통 상한), 카나리 질의 세트. 포트·어댑터 뒤에 둘 외부 의존: IdP·권한 서비스, PII 모델, 키 관리 시스템, 벡터·그래프 저장소의 필터 API. 시점 재현성: 감사 로그의 **요청 시점 주체 집합 해시 + 정책 버전 + ACL 스냅샷**으로 "그때 그 사용자가 왜 그 문서를 봤나"를 복원한다.
 
+### 관측성 — 이 단계에서 무엇을 기록·측정·알림하는가
+
+운영 안정성 표의 "탐지 신호"가 **실제로 어디서 나오는지**를 설계한다. 기준은 [Part 1/07 관측성 설계 요소](../01-foundations/07-operations-vocabulary.md)와 [Part 5/03](../05-cross-cutting/03-observability-tracing.md). 이 단계의 관측에는 두 가지 제약이 겹친다 — ① 스팬이 **PII를 절대 담지 않는다**(탐지 결과는 유형·개수·마스킹 여부만, 사용자는 `agent.subject_set_hash`만) ② 보안 신호(직접 접근·카나리·권한 대조)는 관측과 **감사 양쪽**에 간다. 질의 시 스팬(`acl.resolve`·`acl.filter`)은 Part 3 `retrieval.search`의 자식으로 사용자 턴 트레이스에 들어가고, 색인 시 스팬(`acl.copy`·`pii.detect`)은 문서 트레이스에 들어간다.
+
+| 기록 대상 | 스팬 / 이벤트 (이름, 부모) | 핵심 속성 (버전 키 포함) | 지표 (→ 어느 SLI) | 샘플링 · 보존 · PII |
+|---|---|---|---|---|
+| 주체 해석 (질의 시) | `acl.resolve` (부모: Part 3 `retrieval.search` 또는 게이트웨이 스팬) | `request_id`, `tenant_id`, `agent.subject_set_hash`, `agent.principal_count`, `agent.resolve_cache_hit`, `agent.resolve_ttl_remaining_s`, `agent.idp_adapter_version`, `agent.outcome`(success / blocked / degraded), `agent.degradation[]`(`acl_public_only`) | `acl.resolve.errors` → "주체 해석 오류율", `acl.resolve.cache_hit_ratio`(급등 = IdP 다운 징후) → "캐시 적중률 급등", `acl.resolve.duration_ms` → **SLI ③ 주체 해석 p95**, `acl.filter.degraded_mode_ratio` → 저하 모드 진입 | 메타 전수(턴 트레이스). **사용자 ID 원문 금지**, 해시만 |
+| 사전 필터 적용 (질의 시) | `acl.filter` (부모 `acl.resolve`) | `agent.policy_version`(→ `agent.rules_version`), `agent.filter_hash`(적용 필터 조합), `agent.classification_scope[]`, `agent.candidates{before,after}`, `agent.index_version`, `agent.path`(index / cache) | `acl.filter.count` 카운터(게이트웨이 경유 질의 수 — 아래 직접 접근 수와 대조), `acl.filter.selectivity` → 강한 필터 후 결과 부족 | 전수 |
+| 소스 ACL 복사·게이트 (색인 시) | `acl.copy` (부모: 문서 트레이스 `ingest.fetch`) | `doc_id`, `agent.acl_mapper_version`, `agent.acl_hash`, `agent.group_count`, `agent.tenant_field_present`(bool), `agent.gate_decision`, `agent.reject_reason` | `acl.copy.rejected{source,reason}` → "소스별 게이트 거부율 급변" | 전수. 그룹 ID만, 사용자 열거 금지 |
+| PII 탐지·마스킹 (색인 시) | `pii.detect` (부모 `ingest.fetch`), 모델 호출은 자식 `pii.detect.call`, 마스킹은 `pii.mask` | `agent.pii_model_version`·`agent.pii_pattern_version`, `agent.pii_flags{type:count}`(유형·개수만), `agent.masking_method`(redact / pseudonym / tokenize), `agent.masked`(bool), `agent.low_confidence_masked_count`(저확신은 마스킹 쪽) | `pii.detect.flag_ratio{source,type}`, `pii.detect.recall`(라벨 샘플 배치) → **SLI ④ PII 탐지 재현율**, `pii.output_guard.hits`(출력 가드레일 2차 탐지, Part 3·4 스팬에서 집계) → "출력 가드레일 PII 탐지 적중" | 메타 전수. **PII 값·스팬 텍스트 기록 금지.** 적중 건의 위치 참조만 보안 저장소에 |
+| 권한 대조·카나리 (배치) | `acl.reconcile` ([03](03-metadata-provenance.md)과 공유), `acl.canary` (권한 없는 계정·타 테넌트 질의; `agent.path`=index / cache 둘 다) | `agent.source_id`, `agent.mismatch{expose,hide}`, `agent.canary.kind`(unauthorized / cross_tenant / revoked_cached), `agent.canary.expected=0`, `agent.canary.actual`, `agent.path`, `agent.tenant_pair_hash` | `acl.reconcile.mismatch{direction}` → **SLI ① 권한 대조 불일치(노출 방향 0)**, `acl.canary.fail{kind,path}` → **SLI ② 누출 카나리 통과율**, "카나리 실패(게이트웨이 우회 · 테넌트 교차 · 캐시 경로 회수 문서)" | 대조 주 1회, 카나리 시간당 1회(예시). 결과는 감사 저장소에도 복사 |
+| 직접 접근 탐지 | `index.direct_access` 이벤트 (저장소 접근 로그에서 파생, 부모 없음) | `agent.store`, `agent.client_identity_hash`, `agent.via_gateway`(bool) | `index.direct_access.count{via_gateway=false}`(0이어야 함) vs `acl.filter.count` 대조 → "인덱스 직접 접근 로그" | 전수. 보안 로그(감사)와 동일 원천 |
+| 회수 전파·삭제 이행 | `acl.propagate{target}` ([07](07-freshness-and-sync.md) `sync.propagate{lane=acl}`과 동일 스팬, 끝점 속성 추가), `erasure.propose` → `erasure.execute` 이벤트 (등급 5는 propose만 자동) | `doc_id`, `agent.event_type=acl_revoke`, `agent.target`(index / cache / memory), `agent.erasure_grade`(4 / 5), `agent.derivative_count{expected,deleted}`, `agent.proof_issued`(bool), `agent.approver_count`, `agent.executed_by_role`(human 필수, 등급 5) | `acl.propagate.latency_ms{target}` → **SLI ⑥ ACL 회수 → 인덱스·캐시 갱신 p95**, `erasure.duration_h`·`erasure.proof_gap`(expected − deleted, 0이어야 발급) → **SLI ⑤ 삭제 요청 이행 시간·증명 완전성** | 전수. 삭제 대상 목록·승인자는 감사 저장소에만 |
+
+이 단계는 관측 스팬의 **PII 금지 규칙을 다른 단계에도 공급**한다 — `pii.detect`의 `agent.pii_flags`가 있는 문서는 01·02·05·08 스팬의 본문 opt-in을 자동으로 끄고(마스킹 전 본문 참조 금지), 트레이스 본문 저장소 퍼지는 삭제 레인의 끝점 `trace`로 등록된다([07](07-freshness-and-sync.md)).
+
+| 알림 | 조건 (예시) | 심각도 | 런북 (첫 3단계) |
+|---|---|---|---|
+| 검색 거부·공개만 (장애 모드: 권한 서비스·IdP 다운 · 해석 지연) | `acl.resolve.errors` > 10%가 2분 지속, `degraded_mode_ratio` > 0(저하 모드 진입), 또는 `duration_ms` p95 > 300ms(SLO 3배) 5분 | P1 (지연만이면 P2) | ① IdP·권한 서비스 상태 확인, TTL 내 캐시로 처리 중인지 `resolve_ttl_remaining_s` 분포 확인 ② fail-closed 유지 확인(fail-open 경로 0) ③ 보안 책임자에게 저하 모드 진입 통보, TTL 만료 전 복구 못 하면 거부 모드 공지 |
+| 특정 소스 색인 중단 (장애 모드: ACL·테넌트 필드 누락 거부 폭증) | `acl.copy.rejected{source}` 비율 7일 베이스라인 대비 +5%p 1시간 | P2 | ① `reject_reason` 분포(ACL 누락 vs 테넌트 필드) 확인 ② 01 ACL 매퍼 버전·소스 권한 모델 변경 이력 대조 ③ 누락 상태로 넣지 않음을 유지한 채 매퍼 수정 후 재투입 |
+| 누출 신호 (장애 모드: ACL 드리프트 · 게이트웨이 우회 · 테넌트 교차 — 모두 보안 사고 절차) | `acl.reconcile.mismatch{direction=expose}` ≥ 1, `acl.canary.fail{kind,path}` ≥ 1(종류·경로 불문), 또는 `index.direct_access.count{via_gateway=false}` ≥ 1 | P1 | ① 해당 컬렉션(교차면 교차 컬렉션) 검색 킬 스위치 ② 노출 방향 문서는 보수적 ACL로 즉시 덮어쓰기 + Reasoning 캐시 무효화, 우회면 네트워크 정책·자격 증명 회수 ③ 보안 사고 절차 개시, 감사 로그로 노출 범위(주체 집합 해시 × `evidence_id`) 산정 |
+| PII 노출 (장애 모드: PII 사후 발견) | `pii.output_guard.hits` ≥ 1, 또는 신고 1건 | P1 | ① 해당 `doc_id` 파생물 전부 톰스톤 → 벡터 삭제(부분 삭제 불가) ② 캐시·트레이스 본문 저장소 퍼지 ③ 마스킹 후 재수집, 규제 통지 의무는 법무 판단 |
+| 회수·삭제 지연 (장애 모드: 삭제 요청 이행 불완전 · 회수 전파 지연) | `acl.propagate.latency_ms{target}` p95 > 15분(캐시 끝점 포함), `erasure.duration_h` > 72h, 또는 기한 도래 시 `erasure.proof_gap` > 0 | P1 (전파) / P2 (삭제 이행) | ① 막힌 끝점(`target`) 식별, 캐시 TTL ≤ 주체 해석 TTL 설정 확인 ② 삭제 잡 재실행(멱등), `proof_gap`=0 전까지 증명 미발급 유지 ③ 계보 없는 파생물 발견 시 구조 결함으로 등록 |
+
+대시보드에서 이 단계를 보는 뷰: ② Knowledge 패널 — 주체 해석 p95·캐시 적중률, 저하 모드 진입 타임라인, 권한 대조·카나리 결과(종류 × 경로), 게이트웨이 경유 vs 직접 접근 수, 회수 전파 p95(끝점별), 삭제 요청 이행 시간·증명 완전성 / ③ 비용 패널 — PII 탐지 모델 호출 비용(페이지당, 규칙 1차 필터 통과율 포함) / 감사 추적으로 넘기는 필드(관측 로그와 분리): 거버넌스 접점 표의 질의 로그(요청자·시각·주체 집합 해시·적용 필터·반환 `evidence_id`·저하 모드)·ACL 변경·PII 탐지 기록·삭제 증명·정책 버전·대조·카나리 결과 — **직접 접근 로그·카나리 결과·삭제 증명은 관측과 감사 양쪽에 두되 감사본이 원본**(장기·불변), 관측 스팬은 집계용 카운터와 해시만 / 이 단계의 관측이 없으면 못 보는 장애: **게이트웨이를 거치지 않고 인덱스에 직접 접근하는 우회 경로** — 게이트웨이 스팬만 보면 모든 질의가 필터를 거친 것으로 보인다. 저장소 접근 로그에서 파생한 `index.direct_access.count`를 `acl.filter.count`와 대조하지 않으면 카나리 계정이 쓰지 않는 경로의 누출은 영영 보이지 않는다.
+
 ### 거버넌스 접점 — 정책 · 가드레일 · 승인 · 감사
 
 | 항목 | 이 단계에서의 답 |
@@ -245,6 +271,8 @@ SLI 후보: ① 권한 대조 불일치 건수(노출 방향 = 0 목표) ② 누
 - [ ] 삭제 요청이 계보로 파생물 전부를 식별·삭제·증명하고, 증명 불완전 시 발급되지 않는가
 - [ ] PII 사후 발견 인시던트 런북(톰스톤 → 벡터 삭제 → 캐시·트레이스 퍼지 → 재수집)이 리허설되었는가
 - [ ] 감사 로그가 관측 로그와 분리되어 장기·불변 보존되고 요청 시점 주체 집합·정책 버전을 포함하는가
+- [ ] 운영 안정성 표의 탐지 신호마다 원천 스팬·지표(`acl.resolve.errors`·`cache_hit_ratio`, `acl.copy.rejected`, `acl.reconcile.mismatch{direction}`, `acl.canary.fail{kind,path}`, `index.direct_access.count`, `pii.output_guard.hits`, `erasure.proof_gap`, `acl.propagate.latency_ms{target}`)가 있고, 스팬 어디에도 PII 값·사용자 ID 원문이 없는가
+- [ ] 알림마다 런북이 있고, 누출 신호(대조 노출 방향·카나리 실패·직접 접근)가 하나라도 P1 보안 사고 절차로 이어지는가
 
 ## 최신 트렌드 적용 (최근 1년)
 

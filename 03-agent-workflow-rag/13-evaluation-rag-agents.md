@@ -232,6 +232,32 @@ SLI 후보: 평가 파이프라인 가용성(야간 배치 성공률), judge 보
 
 가장 자주 바뀌는 것: **골든셋 내용** > 임계값 > judge 모델 > 트레이스 포맷. judge 모델 변경은 빈도는 낮지만 "모든 지표가 동시에 움직이는" 유일한 변화이므로 고정 + 보정 셋을 처음부터 둔다. 코드 밖 설정으로 둘 것: 골든셋, 루브릭, 임계값 표, 트리거 매핑, 샘플링 규칙, 층화 셀 정의. 포트·어댑터 뒤에 둘 외부 의존: judge 모델, 평가 라이브러리(RAGAS류), 트레이스 백엔드, 벤더 관측 플랫폼.
 
+### 관측성 — 이 단계에서 무엇을 기록·측정·알림하는가
+
+운영 안정성의 "탐지 신호"가 **실제로 어디서 나오는지**를 설계한다. 기준은 [Part 1/07 관측성 설계 요소](../01-foundations/07-operations-vocabulary.md)와 [Part 5/03](../05-cross-cutting/03-observability-tracing.md). 평가는 다른 단계의 품질 SLI를 **공급하는** 파이프라인이므로, 여기서 관측하는 것은 피평가 시스템이 아니라 **평가 파이프라인 자체** — 실행이 돌았는가, judge가 같은 judge인가, NaN이 지표를 부풀리지 않는가, 트래젝토리가 실제로 추출됐는가. 이 단계의 장애는 전부 "안 보임"이라 파이프라인 자체 지표가 없으면 탐지 자체가 없다.
+
+| 기록 대상 | 스팬 / 이벤트 (이름, 부모) | 핵심 속성 (버전 키 포함) | 지표 (→ 어느 SLI) | 샘플링 · 보존 · PII |
+|---|---|---|---|---|
+| 평가 실행 | `eval.run {suite}`(독립 배치 트레이스; 트리거 CI / 야간 / 수동), 자식 `eval.case {case_id}` | `agent.eval_suite_version, agent.evalset_version, agent.evalset_split`(dev / holdout), `agent.target_versions`(피평가 조합: model / prompt / index / rules / catalog / question), `agent.trigger, agent.outcome`(pass / fail / incomplete), `agent.cases_total / skipped` | **실행 시간 p95**(스위트별), 야간 배치 성공률(→ 가용성 SLI), **마지막 성공 경과 시간**(게이지 — 배포 게이트의 입력), 케이스 건너뜀 수 | 전수(양 적음). 케이스 입출력은 평가 저장소에, 스팬엔 `case_id` |
+| judge 호출 | `generation.generate`(`gen_ai.*` + 자체 속성), 부모 `eval.case` | `agent.judge_version, agent.judge_pinned, agent.rubric_version, agent.judge_parse_status`(ok / nan / parse_error), `agent.score`, 토큰·비용 | **NaN·파싱 실패율**(→ 동명 SLI), judge 비용(스위트·일별, 절대 상한 대비), judge p95, 캐시 적중률 | 파싱 실패 건 응답 본문 전수. 정상 건은 점수·근거 요약만 |
+| judge 보정 셋 | `eval.run judge_calibration`(일 1회; `judge_pinned=false`면 필수) | `agent.judge_version, agent.calibration_set_version, agent.agreement`(사람 라벨 대비), `agent.agreement_delta_7d, agent.judge_changed_suspect` | **judge 일치율·7일 이동폭**(→ 동명 SLI), "judge 변경 의심" 플래그 | 전수 |
+| 트래젝토리 추출 | `eval.extract_trajectory`, 부모 `eval.run` | `agent.trace_adapter_version, agent.otel_convention_version, agent.framework_version`([14](14-frameworks-landscape.md)), `agent.traces_in, agent.trajectories_out, agent.parse_errors` | 추출 건수(하한 알림 — L3가 조용히 0건이 되는 것 방지), 파서 오류율 | 전수 |
+| 온라인 샘플링 | `eval.sample`, 부모는 운영 `turn`; judge 결과는 비동기로 스팬 링크 | `agent.stratum`(실패 / 저확신 / 폴백 / 승인 / 무작위 기저), `agent.sample_weight, agent.population_share` | 층화 셀 커버리지(→ 동명 SLI), 가중·비가중 추정 괴리(편향 신호), 샘플 구성비 vs 모집단 구성비 | 샘플만(정의상). 실패·저확신 셀은 본문 전수(마스킹) |
+| 반복 안정성 | `eval.case`의 `agent.run_index`(1..N), `agent.pass`, `agent.unstable` | 케이스 ID, 그래프·프롬프트 버전 | run 간 통과율 분산(→ 동명 SLI), 불안정 케이스 수 추이(비결정성 자체가 회귀 신호) | 전수 |
+| 골든셋 환류·삭제 전파 | 이벤트 `eval.goldenset_update`(출처: 운영 실패 환류 / [Part 2/07](../02-data-pipeline/07-freshness-and-sync.md) 삭제 레인) | `agent.evalset_version, agent.update_source`(feedback / delete_lane), `agent.cases_added / quarantined, source_event_ts` | 환류 리드타임(→ 동명 SLI), 삭제 이벤트 → 케이스 검수 대기 p95(→ 동명 SLI), 검수 대기 잔량(흐름·적체) | 전수 |
+
+| 알림 | 조건 (예시) | 심각도 | 런북 (첫 3단계) |
+|---|---|---|---|
+| 평가 파이프라인 정지 | 마지막 성공 경과 > 26시간(야간 배치), 또는 CI 스위트 `incomplete` | P2 (등급 3 이상 변경이 배포 대기 중이면 P1) | ① 배포 게이트가 fail-closed로 막고 있는지, 축소 게이트는 등급 1~2에만 열렸는지 확인 ② 실패한 자식 스팬(추출 / judge / 집계) 식별 ③ 4시간 초과 시 에스컬레이션, 배포 동결 공지 |
+| judge 변경 의심 | 보정 셋 일치율 7일 이동 > 3%p, 또는 `judge_pinned=false`에서 `judge_version` 변화 감지 | P2 | ① 피평가 `target_versions`가 불변인지 확인(시스템 변경 없는 지표 점프) ② 모든 품질 지표에 "judge 변경 의심" 플래그 ③ 사람 라벨 재정렬·베이스라인 재설정, 비교 금지 기간 선언 |
+| NaN·파싱 실패 | 한 실행의 NaN 비율 > 2% | P3 (NaN 제외 집계가 켜져 있으면 P2 — 점수가 거짓으로 좋아짐) | ① NaN이 실패로 집계되는 옵션 확인 ② judge 프롬프트·출력 스키마·모델 버전 변경 이력 ③ 실패 응답 샘플 리뷰 |
+| 트래젝토리 추출 급감 | `trajectories_out` < 전주 동일 실행의 50%, 또는 `parse_errors` > 1% | P2 | ① 어댑터·OTel 컨벤션·프레임워크 버전 변화 대조 ② L3 지표를 "데이터 없음"으로 표시(0점으로 보이지 않게) ③ 어댑터 수정·버전 고정 |
+| 골든셋 신뢰 저하 | 홀드아웃-개발셋 점수 괴리 소멸(유출 의심), 또는 검수 대기 잔량 > 50건 2주 | P3 | ① 환류 중복 검사 로그 확인 ② 삭제 레인 소비 지연·검수 담당 확인 ③ 홀드아웃 재구성 여부 결정 |
+
+- **대시보드에서 이 단계를 보는 뷰**: ② 레이어·단계별 SLI 패널에 "평가 파이프라인" 행 — 실행 시간, 성공률·마지막 성공 경과, judge 일치율 이동, NaN율, 추출 건수, 반복 분산. 다른 모든 품질 패널에는 `evalset_version`·`judge_version` 전환선을 주석으로 — 지표 점프를 시스템 변경과 구분하는 장치. ③ 비용·판정 분포 — judge 비용(스위트·일별, 상한 대비), 온라인 샘플 신뢰구간 폭.
+- **감사 추적으로 넘기는 필드(관측 로그와 분리)**: 배포 판정 레코드 — 평가 대상 버전 조합, 골든셋·judge·임계값 버전, 층별 결과·통과율, 판정(통과 / 차단 / 승인 / 축소 통과), 승인자·사유, 제외 케이스·제외 사유. 변경 관리 저장소에 장기 보존. 관측에는 실행 ID·요약 지표만.
+- **이 단계의 관측이 없으면 못 보는 장애**: **평가가 조용히 거짓 안심을 주는 것**. judge 교체, NaN 제외 집계, 추출 0건은 모두 지표를 **좋아 보이게** 만든다 — 피평가 시스템은 그대로인데 품질이 올라간 것처럼 보이거나, 회귀가 있는데 통과한다. 파이프라인 자체 지표가 없으면 운영 품질 하락을 평가가 아니라 사용자 불만으로 안다.
+
 ### 거버넌스 접점 — 정책 · 가드레일 · 승인 · 감사
 
 | 항목 | 이 단계에서의 답 |
@@ -252,6 +278,8 @@ SLI 후보: 평가 파이프라인 가용성(야간 배치 성공률), judge 보
 - [ ] 변경 → 회귀 트리거 매핑이 모든 버전 관리 대상을 덮는가(커버리지 테스트)
 - [ ] 골든셋·judge·임계값이 버전 관리되고 judge + 베이스라인이 한 롤백 단위인가
 - [ ] 배포 판정 레코드에 평가 대상 버전 조합과 골든셋·judge 버전이 남는가
+- [ ] 평가 파이프라인 자체의 실행 시간·마지막 성공 경과·NaN율·judge 일치율 이동·추출 건수가 대시보드에 있고, 정지 알림이 배포 게이트 fail-closed와 연결되어 있는가
+- [ ] 모든 품질 SLI 패널에 `evalset_version`·`judge_version` 전환선이 주석으로 붙어 지표 점프를 judge 변경과 구분할 수 있는가
 
 ## 최신 트렌드 적용 (최근 1년)
 

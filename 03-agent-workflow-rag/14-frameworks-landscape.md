@@ -199,6 +199,31 @@ SLI 후보: hooks 호출률(게이트가 있어야 할 툴 호출 대비 hooks �
 
 가장 자주 바뀌는 것: **프레임워크 자체(프로토콜·SDK)** — 다른 단계와 달리 이 단계에서는 지식·규칙보다 프레임워크가 더 자주 바뀐다(1년 새 넷). 그래서 흡수 경계는 "두꺼운 밖 모듈 + 얇은 어댑터"이고, 판단 기준은 **"프레임워크를 바꿀 때 01~13 페이지의 산출물 중 무엇이 바뀌는가 — 답이 '없음'이어야 한다"**. 코드 밖 설정으로 둘 것: 프레임워크 버전 허용 범위, 모델 ID 매핑 표, 실행 상한(스텝·토큰·시간), 업그레이드 창 일정. 포트·어댑터 뒤에 둘 외부 의존: 프레임워크(상태·hooks·트레이스·MCP 클라이언트), 모델 벤더 API, 관측 플랫폼.
 
+### 관측성 — 이 단계에서 무엇을 기록·측정·알림하는가
+
+운영 안정성의 "탐지 신호"가 **실제로 어디서 나오는지**를 설계한다. 기준은 [Part 1/07 관측성 설계 요소](../01-foundations/07-operations-vocabulary.md)와 [Part 5/03](../05-cross-cutting/03-observability-tracing.md). 프레임워크는 **스팬을 내는 자리**(hooks·콜백·트레이스 익스포터)를 제공할 뿐이므로, 이 단계의 고유한 관측 대상은 "스팬이 **빠지는** 지점"이다 — 장애가 지표 값이 아니라 **없는 스팬**으로 나타나기 때문에, 기대 스팬 대비 실제 스팬을 세는 **계측 커버리지**를 별도 지표로 둔다. 다른 모든 단계의 관측이 이 커버리지에 기댄다.
+
+| 기록 대상 | 스팬 / 이벤트 (이름, 부모) | 핵심 속성 (버전 키 포함) | 지표 (→ 어느 SLI) | 샘플링 · 보존 · PII |
+|---|---|---|---|---|
+| hooks → 게이트 호출 | hooks가 내는 `gate.evaluate {gate}`(부모 `tool.invoke {tool}`), 툴 실행 포트의 재평가는 같은 이름에 `agent.gate_caller=port` | `agent.gate_caller`(hook / port), `agent.hook_name, agent.framework_version, agent.adapter_version, agent.rules_version` | **hooks 호출률**(게이트가 필요한 `tool.invoke` 중 `gate_caller=hook` 자식을 가진 비율 → 동명 SLI, 100% 아니면 장애), hook·port 판정 불일치 건수(이중 호출 멱등 검증) | 전수. hook 없이 port만 판정한 건은 감사 레코드로 복제 |
+| 계측 커버리지 | 배치 `trace.completeness_check`(시간 단위, 종료된 트레이스 대상) | 스팬 종류별 기대 vs 실제 — `agent.coverage{span}`(state.checkpoint / gate.evaluate / generation.generate / tool.invoke / memory.*), 버전 키 5종 + `agent.framework_version / adapter_version` 누락률, `gen_ai.*` 매핑 누락률 | **계측 커버리지**(스팬 종류 × 프레임워크 × 팀), 속성 누락률, 고아 스팬(부모 없음) 비율 | 전수(집계만 저장) |
+| 어댑터 경계 | `agent.handoff {from→to}`(멀티 프레임워크·멀티에이전트 경계, 부모 `invoke_agent {name}`); `state.checkpoint` / `state.restore`에 `agent.store_impl`(builtin / external), `agent.checkpoint_format_version` | `agent.framework_from / framework_to, agent.format_adapter_version, agent.outcome`(ok / convert_failed → 사람 경로) | 핸드오프 실패율, 재개 성공률(→ 동명 SLI), **builtin 저장소로 돈 운영 실행 수**(0이어야), 포맷 버전 혼재 수 | 실패 건 전수 |
+| 실행 상한 | `invoke_agent {name}` 속성 `agent.steps, agent.tokens_total, agent.wall_ms, agent.cap_hit`(step / token / time / none), `agent.cap_enforced_by`(external / framework) | 프레임워크·어댑터 버전 | 스텝 수 p95(프레임워크 버전별 — 추상화 누수 신호), 상한 도달률, `cap_enforced_by=framework` 비율(0이어야 — 외부 강제가 먼저 걸려야 한다) | 상한 도달 건 전수 |
+| 모델 호출 매핑 | `generation.generate`(`gen_ai.*`) + `agent.model_alias, agent.model_mapping_version, agent.sdk_version` | 벤더·모델 ID, 비용 | 모델별 오류율(폐기 모델 `not_found` 급증), 매핑 표 폴백 발동률, 모델별 비용 비중 | 메타 전수 |
+| 프로토콜·의존성 | `mcp.connect {server}`(`agent.mcp_protocol_version_client / server`); 배치 `ci.dependency_audit` | `agent.framework_release_age_days, agent.deps_vuln_count, agent.framework_versions_in_fleet[]`, 유지보수 모드 플래그 | MCP 핸드셰이크 오류율, 팀 간 프레임워크 버전 수(→ 동명 SLI), 업그레이드 리드타임(→ 동명 SLI), 유지보수 모드 의존 수 | 전수 |
+
+| 알림 | 조건 (예시) | 심각도 | 런북 (첫 3단계) |
+|---|---|---|---|
+| hooks 호출률 < 100% | 10분 창에서 게이트 필요 `tool.invoke` 중 `gate_caller=hook` 자식이 없는 건 1건 이상 | **P1** (가드레일 미실행) | ① 배포 자동 롤백 발동 확인 ② 해당 건을 포트 재평가(`gate_caller=port`)가 막았는지 감사 레코드로 확인 — 못 막았으면 [12](12-guardrails-hitl.md) 미탐 절차 ③ 어댑터 계약 테스트 재실행, 프레임워크·어댑터 버전 diff |
+| 계측 커버리지 하락 | 스팬 종류별 커버리지 < 99% 1시간, 또는 버전 키 누락률 > 1%(업그레이드 직후 24시간은 민감도 상향) | P2 | ① 프레임워크·어댑터 버전 변경 시점과 대조 ② 누락 스팬 종류와 팀·서비스 식별 ③ 해당 구간 트레이스는 L3 평가([13](13-evaluation-rag-agents.md))에서 "불완전" 태그, 품질 지표에 주석 |
+| 상한 동작 변화 | 스텝 수 p95 전주 대비 ±50%, 또는 `cap_enforced_by=framework` 1건 | P2 | ① 업그레이드 diff에서 루프 종료·재시도 동작 변경 확인 ② 외부 상한 강제 코드가 프레임워크 상한보다 먼저 걸리는지 확인 ③ L3 효율 지표 전후 비교 |
+| 재개·핸드오프 실패 | 재개 실패율 > 1%, 또는 `convert_failed` > 0.5% 15분 | P2 | ① 체크포인트 포맷 버전 혼재 확인 ② 구버전 마이그레이션 실행 ③ 사람 경로 유입량 확인, 포맷 통일 작업 등록 |
+| builtin 저장소·폐기 의존 | `store_impl=builtin` 운영 트레이스 1건, 또는 유지보수 모드 프레임워크에 신규 의존 추가 | P3 (ORR 위반으로 기록) | ① 해당 팀·서비스 식별 ② 외부 저장소 어댑터 전환 계획 ③ CI 규칙 보강 |
+
+- **대시보드에서 이 단계를 보는 뷰**: ② 레이어·단계별 SLI 패널 하단에 "계측 커버리지" 행(스팬 종류 × 프레임워크 × 팀) — 위쪽 모든 패널의 **신뢰도 주석** 역할. hooks 호출률은 Action 패널에 100% 기준선과 함께. ③ 비용·판정 분포 — 프레임워크·버전별 비용 비중, 스텝 수 분포(버전 전환선 표시), 모델 매핑 폴백 발동률.
+- **감사 추적으로 넘기는 필드(관측 로그와 분리)**: 실행 레코드마다 프레임워크·어댑터 버전(시점 재현의 전제). 업그레이드 건마다 전후 버전, 계약 테스트 결과, 카나리 지표, 승인자 2인, 체크포인트 마이그레이션 실행 여부, 롤백 가능 확인 결과 — 변경 관리 저장소. hooks 미실행 건에서 포트 재평가가 내린 판정은 감사 레코드 필수.
+- **이 단계의 관측이 없으면 못 보는 장애**: **가드레일이 호출되지 않는 것**. 모든 요청이 성공하고 지연도 정상이다 — 게이트가 빠졌다는 사실은 어떤 지표 값에도 나타나지 않고 **있어야 할 스팬이 없다**는 형태로만 존재한다. hooks 호출률과 계측 커버리지가 없으면 이 장애를 못 볼 뿐 아니라, 다른 모든 단계의 관측이 "빠진 스팬 = 발생하지 않은 일"로 읽혀 통째로 거짓 안심이 된다.
+
 ### 거버넌스 접점 — 정책 · 가드레일 · 승인 · 감사
 
 | 항목 | 이 단계에서의 답 |
@@ -219,6 +244,8 @@ SLI 후보: hooks 호출률(게이트가 있어야 할 툴 호출 대비 hooks �
 - [ ] 프레임워크 교체 시나리오(비용·기간·바뀌는 산출물 목록)를 추정해 두었고 "바뀌는 01~13 산출물"이 없는가
 - [ ] 유지보수 모드 프레임워크에 신규 의존 추가가 CI 규칙으로 금지되어 있는가
 - [ ] 모든 실행 레코드에 프레임워크·어댑터 버전이 기록되는가
+- [ ] hooks에서 나온 `gate.evaluate`와 툴 실행 포트의 재평가가 `agent.gate_caller`로 구분되어 hooks 호출률을 트레이스에서 직접 계산하는가
+- [ ] 스팬 종류별 계측 커버리지와 버전 키 누락률을 재는 완결성 검사가 돌고, 업그레이드 직후 24시간 민감도를 높이는가
 
 ## 최신 트렌드 적용 (최근 1년)
 

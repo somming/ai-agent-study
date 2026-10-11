@@ -201,6 +201,32 @@ SLI 후보: ① 소스 변경 → 정규화 문서 생성까지의 지연 p95 �
 
 가장 자주 바뀌는 것: **지식**(문서 내용·소스 양식), 그 다음이 소스 API·커넥터. 코드 밖 설정으로 둘 것: 소스 인벤토리(유형·주기·소유자·ACL 매핑), 포맷 라우터 테이블, 커넥터별 레이트 리밋·재시도, 머리글·바닥글 제거 패턴, 파서 선택 규칙. 포트·어댑터 뒤에 둘 외부 의존: 소스 시스템 API, 매니지드 커넥터, 벤더 OCR·VLM API, 파서 라이브러리. 시점 재현성은 **불변 원본 저장소 + `parser.version`**이 보장한다. 원본이 남아 있으면 어떤 파서 버전으로도 다시 만들 수 있다.
 
+### 관측성 — 이 단계에서 무엇을 기록·측정·알림하는가
+
+운영 안정성 표의 "탐지 신호"가 **실제로 어디서 나오는지**를 설계한다. 기준은 [Part 1/07 관측성 설계 요소](../01-foundations/07-operations-vocabulary.md)와 [Part 5/03](../05-cross-cutting/03-observability-tracing.md). 이 단계는 Knowledge 배치 파이프라인의 **문서 단위 트레이스가 시작되는 곳**이다 — `ingest.fetch`가 트레이스 루트가 되고, 하류(02~08)의 모든 스팬이 같은 `doc_id` 트레이스에 자식 또는 링크로 붙는다. 커넥터 단위 폴링은 문서와 무관하게 돌므로 별도 스팬(`ingest.poll`)으로 둔다.
+
+| 기록 대상 | 스팬 / 이벤트 (이름, 부모) | 핵심 속성 (버전 키 포함) | 지표 (→ 어느 SLI) | 샘플링 · 보존 · PII |
+|---|---|---|---|---|
+| 커넥터 폴링·커서 진행 | `ingest.poll` (커넥터 실행 단위, 부모 없음) | `agent.source_id`, `tenant_id`, `agent.connector_version`, `agent.cursor_lag_s`(소스 최신 수정시각 − 커서), `agent.events_emitted{upsert,delete,acl}`, `agent.circuit_state`, `agent.outcome` | `ingest.poll.cursor_lag_s` 게이지(소스별), `ingest.poll.errors` 비율, `ingest.queue.inflow` 카운터 → 탐지 신호 "커서 미진행·커넥터 오류율·큐 유입 0" | 메타 전수. 자격 증명·소스 URL 쿼리스트링은 기록 금지. 보존 예시 30일 |
+| 원본 적재 | `ingest.fetch` (문서 트레이스 루트) | `doc_id`, `agent.source_uri_hash`, `agent.content_hash`, `agent.doc_type`, `agent.size_bytes`, `agent.pipeline_version`, `agent.acl_snapshot_hash` | `ingest.fetch.duration_ms`, `ingest.e2e_latency_ms`(소스 수정시각 → 정규화 문서 생성) → **SLI ① 지연 p95** | 메타 전수. 원문은 원본 저장소에만, 스팬엔 해시·URI 참조 |
+| 파싱·포맷 라우팅 | `ingest.parse` (부모 `ingest.fetch`), 벤더 호출은 자식 `ingest.ocr` · `ingest.caption`(`gen_ai.*` 매핑) | `agent.parser.name`·`agent.parser.version`(파서 버전 키), `agent.router_rule_id`, `agent.parse_confidence`, `agent.block_count`, `agent.table_count`, `agent.cache_hit`, `agent.degradation[]`(`ocr_fallback_local`, `caption_skipped`), `gen_ai.usage.*`, `agent.cost_estimate` | `ingest.parse.success_ratio{doc_type}` → **SLI ② 파싱 성공률**, `ingest.parse.duration_ms{parser}` 히스토그램 → "파서별 p95", `ingest.parse.confidence` 히스토그램(베이스라인 대비 분포 이동) → "저신뢰 폭증", `ingest.caption.cost` → 대시보드 ③ | 메타 전수. 블록 텍스트·캡션 본문은 opt-in 참조만. 실패·격리 건은 입력 참조 100% 보존 |
+| 격리 큐 | `ingest.quarantine` 이벤트 (부모 `ingest.parse`) | `agent.quarantine_reason`(timeout / parse_fail / low_confidence / injection), `agent.retry_count`, `agent.queue_wait_ms` | `ingest.quarantine.depth` 게이지, `ingest.quarantine.dwell_h` 히스토그램 → "큐 적체", SLO "격리 체류 ≤ 48h" | 전수. 보존은 큐 체류와 동일 |
+| 입력 가드레일 | `ingest.guard` (부모 `ingest.parse`) | `agent.suspect_injection`(bool), `agent.injection_pattern_id`, `agent.pii_detected_types[]`, `agent.pii_masked`(bool), `agent.rules_version`(패턴 세트 버전) | `ingest.guard.injection_hits{source}` 카운터 → "입력 가드레일 패턴 탐지율". PII 지표 자체는 [10](10-access-control-governance.md) | 적중 건 전수, 적중 블록 본문은 보안 저장소에만 참조. **PII 원문 절대 금지** |
+| 재파싱 샘플 대조·골든셋 | `ingest.verify` 배치 이벤트 (부모 없음, 대상 문서 트레이스에 링크) | `agent.sample_size`, `agent.parser.version{a,b}`, `agent.mismatch_count`, `agent.golden_table_recall`, `agent.ocr_sample_score` | `ingest.verify.mismatch_ratio` → "해시 동일한데 블록 수·텍스트 상이", `ingest.verify.golden_table_recall` → **SLI ③ 표 복원율·OCR 샘플 점수** | 배치 1회/일(예시). 보존 90일(회귀 추적용) |
+
+탐지 신호 중 "하류 하이라이트 실패율"은 [08](08-grounding-data-design.md)의 `evidence.verify` 지표를 `agent.parser.version`으로 분해해 읽고, "대조 배치의 유령 문서 수"는 [07](07-freshness-and-sync.md)의 `sync.reconcile`이 원천이며 이 단계는 `ingest.poll`의 `events_emitted.delete=0` 지속을 보조 신호로 쓴다.
+
+| 알림 | 조건 (예시) | 심각도 | 런북 (첫 3단계) |
+|---|---|---|---|
+| 소스 커서 정체 (장애 모드: 커넥터 다운) | `ingest.poll.cursor_lag_s` > 소스 신선도 SLO의 50%가 30분 지속, 또는 `ingest.queue.inflow`=0이 평소 유입 주기 3배 지속 | P2 (기밀·규정 소스는 P1) | ① `ingest.poll` 최근 스팬의 `agent.circuit_state`·오류 코드 확인 ② 소스 API 상태·자격 증명 만료 확인 ③ 마지막 성공 커서 보존 확인 후 커넥터 소유자 호출 |
+| 스캔 문서 반영 지연 (장애 모드: 벤더 OCR·VLM 지연) | `ingest.parse.duration_ms{parser=ocr}` p95 > 60s가 10분 지속, 또는 `ingest.quarantine.depth` > 1,000 | P2 | ① 벤더 상태 페이지·레이트 리밋 응답 비율 확인 ② `degradation=ocr_fallback_local` 비율로 로컬 파서 폴백이 작동 중인지 확인 ③ OCR 배치 창 확대 또는 텍스트 레이어 문서 우선 처리 |
+| 특정 유형 문서 누락 (장애 모드: 파싱 실패·저신뢰 폭증) | `ingest.parse.success_ratio{doc_type}`가 7일 베이스라인 대비 −5%p 1시간 지속, 또는 `confidence` 분포 p50이 −0.1 이동 | P2 | ① 급변 시점과 `agent.parser.version`·`router_rule_id` 변경 이력 대조 ② 실패 샘플의 소스 포맷·양식 변경 확인 ③ 해당 유형만 2차 파서 라우팅 전환 |
+| 인용 페이지에 내용 없음 (장애 모드: 원본 ↔ 파싱 불일치) | `ingest.verify.mismatch_ratio` > 0.5%, 또는 08 locator 불일치가 특정 `parser.version`에 집중 | P2 | ① 불일치 문서의 `agent.cache_hit`·파서 비결정성 여부 확인 ② 계보 쿼리로 같은 `parser.version` 문서 범위 산정 ③ 재처리 큐 투입, 버전 고정 |
+| 삭제된 문서 계속 인용 (장애 모드: 삭제 감지 실패) | 07 `sync.reconcile.ghosts{source}` ≥ 1이고 해당 소스의 `events_emitted.delete`가 7일간 0 | P1 (기밀·PII) / P2 | ① 커넥터가 삭제 이벤트를 낼 수 있는 감지 방식인지(해시·수정시각은 삭제 못 봄) 확인 ② 대조 배치 톰스톤 재투입 확인 ③ 소스를 이벤트 기반 감지로 승격 검토 |
+| 문서 속 지시 유입 (장애 모드: 인젝션) | `ingest.guard.injection_hits{source}`가 공식 소스에서 ≥ 1 | P2 | ① 적중 블록을 보안 저장소에서 검토(패턴 오탐 여부) ② 플래그 문서가 하류 컨텍스트에 격리 표시로 들어갔는지 확인 ③ 소스 소유자에게 편집 이력 확인 요청 |
+
+대시보드에서 이 단계를 보는 뷰: ② 레이어별 SLI의 Knowledge 패널 — 소스별 커서 지연 히트맵·파싱 성공률(유형별)·격리 큐 깊이·체류 시간 / ③ 비용 패널 — OCR·VLM 캡션 호출 비용(`gen_ai.usage.*` 페이지당, 소스별) / 감사 추적으로 넘기는 필드(관측 로그와 분리): 거버넌스 접점 표의 필드(`doc_id`, `source_uri`, `content_hash`, `ingested_at`, `parser{name,version}`, `pipeline_run_id`, 격리 사유, ACL 스냅샷) — 관측 스팬은 `doc_id`·`content_hash`·`pipeline_run_id`만 공유하고 `source_uri` 원문·ACL 스냅샷 본문은 감사 저장소에만 / 이 단계의 관측이 없으면 못 보는 장애: **커넥터가 살아 있고 오류도 0인데 커서가 전진하지 않는 조용한 정체** — 사용자에게는 "새 문서가 없다"로만 보여 신고가 오지 않고, 하류 지표는 전부 정상이다.
+
 ### 거버넌스 접점 — 정책 · 가드레일 · 승인 · 감사
 
 | 항목 | 이 단계에서의 답 |
@@ -220,6 +246,8 @@ SLI 후보: ① 소스 변경 → 정규화 문서 생성까지의 지연 p95 �
 - [ ] 새 소스 등록이 승인 게이트를 거치고 허용 소스 목록이 코드 밖 설정인가
 - [ ] 수집 시점 ACL 스냅샷과 파서 버전이 감사 레코드에 남는가
 - [ ] 대량 재파싱이 서빙과 분리된 배치 창에서 파티션 단위로 실행되는가
+- [ ] 운영 안정성 표의 탐지 신호마다 원천 스팬·지표(`ingest.poll.cursor_lag_s`, `ingest.parse.success_ratio`, `ingest.verify.mismatch_ratio` 등)가 있고 `agent.parser.version`으로 분해되는가
+- [ ] 알림마다 런북이 있고, 커서 정체 알림이 "오류 0 + 유입 0"의 조용한 정체도 잡는가
 
 ## 최신 트렌드 적용 (최근 1년)
 

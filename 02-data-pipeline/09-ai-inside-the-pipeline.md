@@ -224,6 +224,31 @@ SLI 후보: ① 1천 건당 판정 비용(지점별) ② 저확신(검토) 비�
 
 가장 자주 바뀌는 것: **규칙·질문 정의**(임계값·라벨), 그 다음 **모델**(특히 결정 모델처럼 신생 벤더의 버전·가격·사양). 판정 추상화 계층이 이 둘을 모두 **설정 교체와 어댑터 교체**로 가둔다. 코드 밖 설정으로 둘 것: 질문 정의·enum, 배정표, 임계값·검토 정책, 프롬프트, 폴백 기본값, 예산 상한, 평가셋 참조. 포트·어댑터 뒤에 둘 외부 의존: 결정 모델 API(Jev / Decisions API), LLM API, 소형 모델 서빙, NLI·NER 모델. 시점 재현성: 메타데이터의 `(question_version, method, method_version, confidence, threshold_at)`로 "그때 왜 그렇게 분류됐나"를 복원한다.
 
+### 관측성 — 이 단계에서 무엇을 기록·측정·알림하는가
+
+운영 안정성 표의 "탐지 신호"가 **실제로 어디서 나오는지**를 설계한다. 기준은 [Part 1/07 관측성 설계 요소](../01-foundations/07-operations-vocabulary.md)와 [Part 5/03](../05-cross-cutting/03-observability-tracing.md). 이 단계의 관측 단위는 **판정 지점**이며, 스팬은 1/07의 Reasoning 판정 스팬(`routing.decide`)과 **같은 속성 집합**(`agent.decision`, `agent.confidence`, `agent.decision_source`)을 쓰되 이름만 `pipeline.decide`로 둔다 — 그래야 대시보드 ③의 "결정 소스 분포·확신도 히스토그램" 패널이 서빙 측 판정과 파이프라인 판정을 같은 틀로 보여 준다. 결정 모델 호출처럼 출력 토큰이 없는 스팬은 OTel GenAI 컨벤션에 딱 맞지 않으므로 자체 속성이 주가 되고 `gen_ai.*`는 모델 ID·지연만 매핑한다(5/03).
+
+| 기록 대상 | 스팬 / 이벤트 (이름, 부모) | 핵심 속성 (버전 키 포함) | 지표 (→ 어느 SLI) | 샘플링 · 보존 · PII |
+|---|---|---|---|---|
+| 판정 호출 | `pipeline.decide` (부모: 문서 트레이스 `ingest.fetch` — 판정 지점을 호출한 단계 스팬의 자식), 외부 호출은 자식 `pipeline.decide.call`(`gen_ai.*` 매핑) | `doc_id`, `tenant_id`, `agent.question_id`, `agent.question_version`(→ `agent.prompt_version` 계열), `agent.method`(rule / classifier / decision_model / llm / fallback), `agent.method_version`(→ `agent.model_version`), `agent.decision`, `agent.confidence`, `agent.threshold`, `agent.decision_source`(1/07 어휘), `agent.action_linked`(bool: 철회·PII·등급), `agent.schema_valid`(bool), `agent.cache_hit`, `agent.outcome`(success / fallback / approval_required), `gen_ai.usage.*`, `agent.cost_estimate`, `agent.queue_wait_ms` | `pipeline.decide.errors{question}` → "호출 오류율", `pipeline.decide.duration_ms{question,method}` → **SLI ⑤ 배치 판정 p95**, "지점별 p95", `pipeline.decide.schema_invalid_ratio{question}` → "스키마 위반율", `pipeline.decide.confidence{question,method_version}` 히스토그램 → "확신도 분포 이동", `pipeline.decide.label_distribution{question}` → "라벨 분포 drift", `pipeline.decide.fallback_ratio` → 폴백 사용, `pipeline.decide.cost_per_1k{question,method}` → **SLI ① 1천 건당 판정 비용** | 메타 전수. 입력 상태(문서 텍스트)는 opt-in 참조만. 폴백·저확신·스키마 위반 건 100% |
+| 검토 큐 | `pipeline.review.enqueue` → `pipeline.review.resolve` 이벤트 쌍 (1/07 `approval.request → resolve` 패턴, 부모 `pipeline.decide`) | `agent.question_id`, `agent.confidence`(진입 시), `agent.reviewer_role`(ID는 감사만), `agent.resolution`(approved / corrected / rejected), `agent.dwell_hours`, `agent.action_linked` | `pipeline.review.queue_size{question}` 게이지, `pipeline.review.dwell_hours` 히스토그램 → "큐 크기·체류 시간", `pipeline.review.enqueue_ratio` → **SLI ② 저확신(검토) 비율**, `pipeline.review.approve_ratio`(급등 = 피로) → "검토자 승인률 급등" | 전수. 보존 90일(보정 데이터) |
+| 보정·정밀도 측정 | `pipeline.calibrate` 주간 배치 이벤트 (부모 없음) | `agent.question_id`, `agent.method_version`, `agent.sample_size`, `agent.ece`, `agent.precision`, `agent.recall`, `agent.reliability_bins[]` | `pipeline.calibrate.ece{question,method_version}` → **SLI ④ 보정 오차**, "신뢰도 다이어그램(ECE)", `pipeline.calibrate.precision{question}` → **SLI ③ 사람 라벨 샘플 대비 정밀도** | 주 1회(예시). 보존 1년 |
+| 재판정·섀도 비교 | `pipeline.replay` 배치 이벤트 (부모 없음, 대상 문서 트레이스에 링크) | `agent.question_version{a,b}`, `agent.method_version{a,b}`, `agent.changed_count`, `agent.shadow`(bool: 기록만, 적용 안 함), `agent.cache_miss_count` | `pipeline.replay.change_ratio{question}` → "재판정 시 라벨 변경률", 섀도 수단 vs 현행 일치율 → 교체 게이트 입력 | 배치마다 전수 |
+| 임계값·배정표 변경 | `pipeline.config.change` 이벤트 (부모 없음) | `agent.question_id`, `agent.threshold{before,after}`, `agent.direction`(conservative / relaxed), `agent.actor_role`, `agent.post_audit_scheduled`(bool, 완화 시 필수) | `pipeline.config.relaxed_changes` 카운터(사후 감사 대상 추적, 불균형 ⑦) | 전수. 보존 영구 |
+| 예산 | `pipeline.decide.cost_estimate` 집계 (스팬 속성에서 파생) | `agent.question_id`, `agent.method`, `agent.vendor` | `pipeline.cost.daily{question,vendor}`, `pipeline.cost.budget_ratio`(월 예산 대비) → "건당 비용 추이·예산 알림" | 집계만 |
+
+샘플링·보존: 판정 메타는 전수(비용·보정의 원천). 입력 상태 본문은 opt-in이되 저확신(검토 큐 진입)·폴백·스키마 위반·`action_linked=true` 판정은 100% 보존해 라벨링·재보정 데이터로 환류한다. 검토자 ID는 스팬에 없고 감사 레코드에만 둔다.
+
+| 알림 | 조건 (예시) | 심각도 | 런북 (첫 3단계) |
+|---|---|---|---|
+| 미분류 쏠림·색인 지연 (장애 모드: 판정 API 다운 · 지연 급증) | `pipeline.decide.errors{question}` > 5%가 10분 지속, `fallback_ratio` > 20%, 또는 `duration_ms` p95가 배치 창 예산의 2배 | P2 (30분 초과 또는 신선도 SLO 위협 시 P1) | ① 벤더 상태·레이트 리밋·`retry_count` 확인 ② 지점별 보수적 기본값 폴백이 작동하고 `method=fallback`이 기록되는지 확인 ③ 배정표 2차 수단(소형 모델)으로 전환, 복구 후 배치 재판정 예약 |
+| 분포 이동 (장애 모드: 유효하지 않은 출력·확신도 붕괴 · 재처리 간 라벨 불일치) | `schema_invalid_ratio` 7일 베이스라인 대비 +2%p 1시간, `confidence` 히스토그램 PSI > 0.2(같은 `method_version` 안에서), 또는 `replay.change_ratio` > 5%(캐시 미적중 건) | P2 | ① `method_version` 고정 여부 확인(벤더 묵시 업데이트 의심 시 섀도 비교 시작) ② 라벨 분포 drift가 입력 분포 변화(새 소스)인지 모델 변화인지 01 유입 소스 분포와 대조 ③ 2차 수단으로 전환, 비결정성 큰 수단 교체 검토 |
+| 임계값 의미 상실 (장애 모드: 보정 드리프트) | `pipeline.calibrate.ece{question}` > 0.1(주간) | P3 (`action_linked=true` 지점은 P2) | ① 신뢰도 다이어그램에서 과신·과소 구간 확인 ② 임계값을 보수적 방향으로 이동(자동 허용 범위) ③ 재보정 또는 수단 교체 계획, 행동 연결 지점은 임계값 유지 |
+| 검토 범람 (장애 모드: 검토 큐 범람) | `pipeline.review.dwell_hours` p95 > 72h, 또는 `approve_ratio` > 95%가 7일 베이스라인 대비 +10%p | P2 | ① 큐 유입 급증 원인(분포 이동 vs 임계값 변경) 확인 ② 자동 대응은 보수적 방향만 유지 중인지 확인 ③ 비행동 판정 임계값 완화는 운영 책임자 결정 + `pipeline.config.change{direction=relaxed, post_audit_scheduled=true}` 기록 |
+| 비용 급증 (장애 모드: 벤더 가격·정책 변경) | `pipeline.cost.budget_ratio` > 80%(월), 또는 `cost_per_1k{question}`이 일 기준 ×1.5 | P3 (예산 상한 도달 P2) | ① 비용 증가가 호출 수(유입)인지 단가(벤더)인지 분해 ② 캐시 적중률 하락 여부 확인 ③ 티어 하향 또는 해당 지점 폴백, 예산 재협의 |
+
+대시보드에서 이 단계를 보는 뷰: ② Knowledge 패널 — 지점별 판정 p95·오류율·폴백 비율, 검토 큐 크기·체류 / ③ 비용·판정 분포 패널 — **결정 소스 분포(규칙 / 분류기 / 결정 모델 / LLM)와 확신도 히스토그램을 서빙 측 `routing.decide`와 같은 패널에**, 지점별 1천 건당 비용, ECE 추이, 캐시 적중률 / 감사 추적으로 넘기는 필드(관측 로그와 분리): 거버넌스 접점 표의 `question_id`·버전, `method`·버전, 선택값, 확신도, 적용 임계값, 폴백 여부, 검토자 ID·시각, 캐시 적중, 비용 — 검토자 ID와 임계값 완화 결정의 근거 본문은 감사 저장소에만, 관측 스팬엔 역할·방향 코드 / 이 단계의 관측이 없으면 못 보는 장애: **벤더 모델의 묵시 업데이트로 확신도 분포가 이동했는데 스키마 위반도 오류도 없는 경우** — 임계값이 조용히 의미를 잃어 틀린 자동 판정이 늘어나며, `agent.confidence` 히스토그램을 `agent.method_version`별로 쌓지 않으면 주간 ECE 측정 전까지 보이지 않는다.
+
 ### 거버넌스 접점 — 정책 · 가드레일 · 승인 · 감사
 
 | 항목 | 이 단계에서의 답 |
@@ -243,6 +268,8 @@ SLI 후보: ① 1천 건당 판정 비용(지점별) ② 저확신(검토) 비�
 - [ ] 행동으로 이어지는 판정이 실행 전 규칙 재검증 게이트를 거치는가
 - [ ] 수단 교체가 섀도 → 평가셋 → 전환 절차로 가능하고 어댑터 교체만으로 끝나는가
 - [ ] 건당 비용·월 예산 알림이 있고 벤더 수치가 아니라 `[실측]`으로 예산을 잡았는가
+- [ ] 운영 안정성 표의 탐지 신호마다 원천 스팬·지표(`pipeline.decide.errors`, `schema_invalid_ratio`, `confidence` 히스토그램(`method_version`별), `replay.change_ratio`, `calibrate.ece`, `review.dwell_hours`·`approve_ratio`, `cost.budget_ratio`)가 있는가
+- [ ] 알림마다 런북이 있고, `pipeline.decide`가 1/07 판정 속성(`agent.decision`·`agent.confidence`·`agent.decision_source`)을 그대로 써서 대시보드 ③에서 서빙 측 판정과 함께 보이는가
 
 ## 최신 트렌드 적용 (최근 1년)
 

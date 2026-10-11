@@ -189,6 +189,32 @@ SLI 후보: ① 청크 토큰 한도 준수율 ② 오프셋 유효율(샘플) �
 
 가장 자주 바뀌는 것: **지식**(문서) — 이것은 문서 단위 증분으로 비용 없이 흡수된다. 운영상 부담이 되는 변화는 빈도는 낮지만 전파가 넓은 **임베딩 모델 교체**와 **규칙 재조정**이다. 코드 밖 설정으로 둘 것: 유형별 분할 규칙·크기·오버랩, 접두 적용 컬렉션 목록, 제목 경로 템플릿, 접두 프롬프트, 토큰 한도. 포트·어댑터 뒤에 둘 외부 의존: 토크나이저(임베딩 모델 종속), 접두 생성 LLM, 시맨틱 분할용 임베딩 API. 시점 재현성: `chunk_version` + 원본 `content_hash`로 과거 청크를 결정론적으로 재생성할 수 있다(접두는 캐시 보관 필요).
 
+### 관측성 — 이 단계에서 무엇을 기록·측정·알림하는가
+
+운영 안정성 표의 "탐지 신호"가 **실제로 어디서 나오는지**를 설계한다. 기준은 [Part 1/07 관측성 설계 요소](../01-foundations/07-operations-vocabulary.md)와 [Part 5/03](../05-cross-cutting/03-observability-tracing.md). 청킹은 외부 쓰기가 없는 순수 변환이라 RED 지표는 가볍고, 핵심은 **품질 지표(한도 준수·오프셋 유효)와 분포 이상치**다 — 이 단계의 장애는 오류 없이 검색 품질만 조용히 깎는 종류가 대부분이다. 스팬은 [01](01-source-ingestion.md)이 시작한 문서 트레이스(`ingest.fetch` 루트)의 자식으로 붙는다.
+
+| 기록 대상 | 스팬 / 이벤트 (이름, 부모) | 핵심 속성 (버전 키 포함) | 지표 (→ 어느 SLI) | 샘플링 · 보존 · PII |
+|---|---|---|---|---|
+| 문서 청킹 | `index.chunk` (부모 `ingest.fetch`) | `doc_id`, `tenant_id`, `agent.chunk_version`(규칙 세트 버전 — `agent.index_version`의 구성 요소), `agent.chunk_rule_id`(유형 라우팅 결과), `agent.tokenizer_id`, `agent.pipeline_version`, `agent.parse_quality_score`(입력), `agent.block_count`, `agent.chunk_count`, `agent.chunk_tokens{p50,max}`, `agent.degradation[]`(`chunk_fallback_recursive`), `agent.outcome` | `index.chunk.duration_ms` + `agent.queue_wait_ms` → **SLI ③ 생성 지연 p95**, `index.chunk.size_tokens` 히스토그램(규칙별) → "청크 크기 분포 이상치", `index.chunk.fallback_ratio{source}` → "파싱 품질 임계 미만 폴백" | 메타 전수. 청크 텍스트는 스팬에 넣지 않음(청크 ID만). 보존 예시 30일 |
+| 토큰 한도 검증 | `index.chunk.limit` 이벤트 (부모 `index.chunk`) | `agent.limit_tokens`, `agent.exceed_count`, `agent.resplit_count`, `agent.header_dup_count`(긴 표) | `index.chunk.token_limit_exceed_ratio{tokenizer}` → **SLI ① 한도 준수율**(= 1 − 초과율) | 전수 |
+| contextual 접두 생성 | `index.chunk.prefix` (부모 `index.chunk`, `gen_ai.*` 매핑) | `agent.prefix_model_version`·`agent.prompt_version`, `agent.prefix_cache_hit`, `agent.prefix_scope`(컬렉션 설정), `agent.degradation[]`(`context_prefix_none`), `gen_ai.usage.input_tokens`(문서 전체가 컨텍스트), `agent.cost_estimate` | `index.chunk.prefix.errors`, `index.chunk.prefix.duration_ms` p95, `index.chunk.prefix.queue_depth` → "접두 생성 큐 적체·오류율·p95", `index.chunk.prefix.cost{collection}` → 대시보드 ③ | 메타 전수. 접두 본문은 opt-in(캐시 저장소 참조). 실패 건 100% |
+| 오프셋 샘플 검증 | `index.chunk.verify` 배치 이벤트 (부모 없음, 대상 문서 트레이스에 링크) | `agent.sample_size`, `agent.offset_valid_count`, `agent.mismatch_doc_ids[]`, `agent.chunk_version`, `agent.parser.version`(재파싱 후 미갱신 경로 추적) | `index.chunk.verify.offset_valid_ratio` → **SLI ② 오프셋 유효율**, 탐지 신호 "`original[offsets] == chunk.text` 일치율" | 배치 1회/일(예시). 보존 90일 |
+| 인덱스 버전 혼재 | [04](04-embedding-indexing.md) `index.upsert`의 거부 이벤트를 이 단계가 소비 | `agent.chunk_version`(쓰기 측) vs 컬렉션 허용 버전, `agent.reject_reason=chunk_version_mismatch` | `index.upsert.rejected{reason=chunk_version_mismatch}` 카운터, `index.collection.chunk_version_distinct` 게이지 → "인덱스 내 `chunk_version` 종류 수 > 1" | 전수 |
+
+"하류 하이라이트 실패율"은 [08](08-grounding-data-design.md) `evidence.verify`의 locator 지표를 `agent.chunk_version`으로 분해해 읽는다. 질의 시점의 recall 영향은 Part 3 `retrieval.*` 지표를 `agent.chunk_version`별로 비교하는 것으로 본다(이 단계는 속성만 제공).
+
+샘플링·보존 요약: 메타는 전수, 청크·접두 본문은 스팬에 없고 ID·캐시 참조만. 폴백(`chunk_fallback_recursive`)·`context_prefix_none`·한도 초과·오프셋 불일치 건은 테일 샘플링으로 100% 보존해 평가셋 환류 후보로 쓴다([Part 5/03](../05-cross-cutting/03-observability-tracing.md) 샘플링 표의 "실패·폴백 건 100%" 규칙).
+
+| 알림 | 조건 (예시) | 심각도 | 런북 (첫 3단계) |
+|---|---|---|---|
+| 구조 청크 붕괴 (장애 모드: 상류 파서 구조 누락) | `index.chunk.fallback_ratio{source}` > 20%가 1시간 지속, 또는 `size_tokens` p95가 규칙 상한의 1.5배 | P2 | ① 해당 소스의 `agent.parse_quality_score` 분포와 01 `ingest.parse.confidence` 대조 ② 01 파서 라우팅·버전 변경 이력 확인 ③ 폴백 청크 범위 산정 후 파서 복구 뒤 재청킹 큐 투입 |
+| 접두 생성 적체 (장애 모드: 접두 LLM 다운·지연) | `index.chunk.prefix.queue_depth`가 신선도 SLO의 50% 시간 안에 소진 불가(유입 > 처리 30분 지속), 또는 오류율 > 10% | P3 (신선도 SLO 위협 시 P2) | ① `context_prefix_none`으로 색인이 계속되는지 확인(멈췄으면 즉시 P2) ② 벤더 상태·레이트 리밋 확인 ③ 접두 범위 축소 또는 킬 스위치, 복구 후 배치 보강 예약 |
+| 조용한 절단 (장애 모드: 토큰 한도 초과 폭증) | `index.chunk.token_limit_exceed_ratio` > 0.5%가 1시간 지속 | P2 | ① `agent.tokenizer_id`가 04 임베딩 모델 토크나이저와 일치하는지 확인 ② 초과 청크의 유형(긴 표·코드·한국어 비중) 분포 확인 ③ 규칙 크기 재조정 또는 헤더 복제 분할 규칙 추가 |
+| 하이라이트 어긋남 (장애 모드: 청크 ↔ 원문 위치 불일치) | `index.chunk.verify.offset_valid_ratio` < 100% (불일치 1건) | P2 | ① 불일치 문서의 `agent.parser.version`이 청크 생성 시점과 다른지 확인(재파싱 후 미갱신) ② 같은 경로 문서 범위 산정 ③ 재청킹 큐 투입, 미갱신 경로 수정 |
+| 중복 검색 (장애 모드: `chunk_version` 혼재) | `index.collection.chunk_version_distinct` > 1이고 [07](07-freshness-and-sync.md) `sync.switch` 진행 중이 아님 | P1 | ① 거부 로그의 쓰기 주체(파이프라인 설정) 확인 ② 혼입 버전 청크 범위 식별 ③ 삭제 후 현행 버전으로 재처리 |
+
+대시보드에서 이 단계를 보는 뷰: ② Knowledge 패널 — 규칙별 청크 크기 분포·한도 초과율·폴백 비율·오프셋 유효율 / ③ 비용 패널 — 접두 생성 토큰 비용(컬렉션별, 캐시 적중률 포함) / 감사 추적으로 넘기는 필드(관측 로그와 분리): `chunk_version`, 적용 규칙 ID, `tokenizer_id`, 접두 생성 모델·버전, `derived_from`, 폴백 여부 — 관측 스팬과 같은 값이지만 감사 저장소에는 청크 ID 단위로 장기 보존 / 이 단계의 관측이 없으면 못 보는 장애: **토큰 한도 초과로 임베딩이 조용히 절단되는 것** — 오류도 지연도 없이 recall만 서서히 떨어지며, 한도 초과율 지표가 없으면 Part 3 평가셋 회귀로만 뒤늦게 발견된다.
+
 ### 거버넌스 접점 — 정책 · 가드레일 · 승인 · 감사
 
 | 항목 | 이 단계에서의 답 |
@@ -207,6 +233,8 @@ SLI 후보: ① 청크 토큰 한도 준수율 ② 오프셋 유효율(샘플) �
 - [ ] 유형별 규칙·크기·접두 범위가 코드 밖 설정이고 버전이 있는가
 - [ ] 규칙 변경 시 평가셋 회귀 → 블루/그린 전환 절차가 문서화되어 있는가
 - [ ] 오프셋 유효율 샘플 검증이 주기적으로 돌고 불일치가 재처리 큐로 가는가
+- [ ] 운영 안정성 표의 탐지 신호마다 원천 스팬·지표(`index.chunk.token_limit_exceed_ratio`, `index.chunk.verify.offset_valid_ratio`, `fallback_ratio` 등)가 있고 `agent.chunk_version`으로 분해되는가
+- [ ] 알림마다 런북이 있고, 접두 적체 알림이 "색인 계속 여부"를 먼저 확인하게 되어 있는가
 
 ## 최신 트렌드 적용 (최근 1년)
 

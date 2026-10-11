@@ -210,6 +210,32 @@ SLI 후보: 과업 성공률(골든셋), 스텝 수 분포(p50/p95), 상한 도�
 
 가장 자주 바뀌는 것: 툴 집합(툴 추가·스키마 변경) ≈ 시스템 프롬프트(주 단위) > 상한·θ > 모델(분기) > 패턴 교체 > 프레임워크·프로토콜. 코드 밖 설정으로 둘 것: 시스템 프롬프트, 툴 레지스트리·역할별 서브셋, 상한 6종, 종료 조건, 재계획 트리거, 판정 θ, 패턴 선택 플래그. 포트·어댑터 뒤에 둘 외부 의존: 모델 API, 결정 모델 API, 툴/MCP 서버, 체크포인트 저장소, SDK 런타임.
 
+### 관측성 — 이 단계에서 무엇을 기록·측정·알림하는가
+
+운영 안정성의 "탐지 신호"가 **실제로 어디서 나오는지**를 설계한다. 기준은 [Part 1/07 관측성 설계 요소](../01-foundations/07-operations-vocabulary.md)와 [Part 5/03](../05-cross-cutting/03-observability-tracing.md). 에이전트 루프의 관측 단위는 **스텝**이다 — `agent.step {n}` 아래에 판정·툴·게이트가 자식으로 매달리고, 루프 전체 지표는 턴 종료 시 `invoke_agent` 루트에 집계한다. 비용이 스텝 수에 비례하는 유일한 구간이므로 "스텝 번호 × 토큰" 분포가 이 단계의 고유 지표다.
+
+| 기록 대상 | 스팬 / 이벤트 (이름, 부모) | 핵심 속성 (버전 키 포함) | 지표 (→ 어느 SLI) | 샘플링 · 보존 · PII |
+|---|---|---|---|---|
+| 루프 전체 | `invoke_agent {name}` (부모 `turn`) — 턴 종료 시 집계 | `agent.pattern`(react/plan_execute/reflection/orchestrator), `agent.step_count`, `agent.limit_hit`(step/token/time/iteration/replan/depth), `agent.outcome`, `agent.degradation[]`=`partial`·`plan_fallback`·`workflow_fallback`, 토큰 합계·`agent.cost_estimate`, 버전 키 5종(`agent.catalog_version`=툴 레지스트리 버전) | **과업 성공률**(골든셋 + 샘플 judge 링크), **스텝 수 분포(p50/p95)**, **상한 도달률**, **요청당 토큰·비용 p95**, **E2E p95** | 메타 전수, 상한 도달·실패 트래젝토리는 본문 전수(골든셋 환류) |
+| 스텝 | `agent.step {n}` (부모 `invoke_agent`); 모델 호출은 자식 `generation.generate` + `gen_ai.*` | `agent.state_hash`, `agent.no_progress_count`, `agent.context_tokens`(스텝 입력), `agent.compaction_applied`, `agent.truncated_outputs`, 스텝 지연, `agent.outcome`=fallback(모델) | 스텝 오류율·p95, 진행 없음 감지율(동일 해시 N회), **스텝 번호 × 토큰 히트맵**(추이), 컨텍스트 초과 오류율, 모델 폴백률 → 모델 다운(스텝 중), 컨텍스트 폭증 | 메타 전수 |
+| 다음 행동 판정 | `routing.decide next_action` (부모 `agent.step`) | `agent.decision`(tool/answer/replan/stop), `agent.confidence`, `agent.decision_source`, 질문 정의 버전, `agent.outcome`=fallback(결정 모델 → 소형 LLM → 규칙 안전 종료) | 판정 API 오류율·p95, 판정 폴백률(수단별), 행동 선택 분포, 확신도 히스토그램 → 판정 수단 다운 | 메타 전수 |
+| 툴 호출 | `tool.invoke {tool}` (부모 `agent.step`; 상세 [09](09-tools-and-mcp.md)) | 툴 이름·스키마 버전, MCP 서버 ID, `agent.args_hash`, `agent.idempotency_key`(요청 ID + 스텝), 결과 크기·`agent.result_truncated`, `agent.error_code`, `agent.error_injected`(구조화 오류를 관찰로 주입했는지), `agent.circuit_state`, `agent.repeat_count`(같은 툴·같은 인자 해시 반복 횟수) | **툴 오류율**·p95·타임아웃(툴별), **반복 행동 발생률**(`repeat_count` ≥ 3 비율), 서킷 열림으로 툴 목록에서 제거된 건수 → 툴 타임아웃·오류, 반복 행동 | 메타 전수, 인자·결과 본문 opt-in(마스킹), 오류 건 전수 |
+| 행동 게이트·승인 | `gate.evaluate action_policy` → `approval.request` / `approval.resolve` (부모 `agent.step`, 툴 실행 직전) | `agent.risk_level`, `agent.rule_ids[]`·`agent.rules_version`, 게이트 출력 4종, 승인자 역할 해시, 승인 결과(approved/rejected/expired), `agent.queue_wait_ms`, 재개 체크포인트 ID | 차단률(사유별), 승인 요청률, 승인 대기 p95, 만료=거부 비율, 승인 후 재개 성공률 | **전수**(샘플링 금지), 승인 카드 내용은 감사 저장소에 |
+| 패턴 전용 | Plan-and-Execute `agent.plan` / `agent.replan {n}`; Reflection `agent.iteration {n}` (부모 `invoke_agent`) | `agent.consecutive_failures`, 재계획 상한 도달; `agent.score`·`agent.converged` | 재계획율·재계획 상한 도달률, 단계 연속 실패 분포, 반복 수 분포·비수렴률 → 계획 경직, Reflection 비수렴 | 메타 전수 |
+| 체크포인트 | 이벤트 `checkpoint.save` / `checkpoint.resume` | `agent.checkpoint_id`, 상태 스키마 버전, "실행 완료" 기록 히트 | 재개 성공률, 중복 실행 차단 건수 ([08](08-state-memory-context.md)) | 전수, 상태 본문은 저장소에만 |
+
+| 알림 | 조건 (예시) | 심각도 | 런북 (첫 3단계) |
+|---|---|---|---|
+| 스텝 모델 폴백 급증 | 스텝 `agent.outcome=fallback` 비율 10분간 50% 초과, 또는 모델 서킷 열림 | P1 | ① 벤더·서킷 상태 확인 ② 폴백 모델이 **툴 호출 형식까지** 호환 매트릭스에서 검증된 것인지 확인 ③ 체크포인트 재개 대기와 부분 결과 반환 비율 확인 |
+| 상한 도달·반복 행동 | `agent.limit_hit` 비율 5% 초과, 진행 없음 감지율 급증, 또는 `repeat_count` ≥ 3 비율 급증 | P2 | ① 패턴·툴·테넌트별로 분해, `repeat_count` 상위 툴 확인 ② 시스템 프롬프트·종료 조건·모델 버전의 최근 변경 확인 ③ 상한 하향 또는 Plan-and-Execute·워크플로우 폴백 플래그 검토 |
+| 툴 오류율 상승 | 특정 툴 오류율 10% 초과 | P2 | ① 툴 서킷 상태와 툴 목록에서 제거되었는지 확인 ② 오류가 구조화 관찰로 주입되는지(`error_injected`=true 비율) 확인 — 빈 결과면 모델이 지어낸다 ③ MCP 서버 소유자 통보([09](09-tools-and-mcp.md)) |
+| 판정 수단 장애 | `routing.decide next_action` 결정 모델 오류 1건 이상(즉시) | P1 | ① 소형 LLM 판정 폴백·규칙 안전 종료 비율 확인 ② 결정 모델 벤더 상태 ③ 폴백 중 행동 선택 분포 변화(위험 툴 선택 증가 여부) 확인 |
+| 컨텍스트·수렴 이상 | 컨텍스트 초과 오류 1건 이상, 비수렴률 10% 초과, 또는 재계획 상한 도달 반복 | P2 | ① 스텝 번호 × 토큰 히트맵에서 폭증 스텝 확인 ② compaction 발동 여부·툴 출력 절단 설정 확인 ③ 평가 기준·재계획 트리거 설정 점검 |
+
+대시보드에서 이 단계를 보는 뷰: ② Reasoning 패널의 핵심 공급원 — 스텝 수 분포, 상한 도달률, 툴별 오류율, 스텝 × 토큰 히트맵, 행동 선택 분포, 승인 대기 / ③ 비용·판정 분포 — 요청당 토큰·비용 p95, 캐시 토큰 비율(시스템 프롬프트 + 툴 정의 접두사), 판정 확신도 히스토그램·결정 소스 분포 / ① E2E — 과업 성공률, 승인 대기 시간, 저하율.
+감사 추적으로 넘기는 필드(관측 로그와 분리): 세션·요청 ID, 스텝 번호, 스텝별 판정·수단·확신도, 툴 호출(이름·인자 해시·멱등 키·결과 요약), 게이트 판정·규칙 버전, 승인자·시각, 프롬프트·모델 버전(폴백 여부), 상한 도달·폴백 여부, 체크포인트 ID, 최종 답변 근거 ID — 거버넌스 접점 표와 동일.
+이 단계의 관측이 없으면 못 보는 장애: **지어낸 관찰** — 툴 타임아웃이 빈 결과로 들어가면 모델은 결과를 추정해 루프를 정상 종료하고, 성공률도 정상처럼 보인다. `tool.invoke` 오류와 바로 다음 `agent.step`의 답변 근거를 같은 트레이스에서 잇지 않으면 발견되지 않는다. 그리고 **쓰기 툴 중복 실행** — 멱등 키와 "실행 완료" 히트를 세지 않으면 외부 시스템의 이중 처리로만 드러난다.
+
 ### 거버넌스 접점 — 정책 · 가드레일 · 승인 · 감사
 
 | 항목 | 이 단계에서의 답 |
@@ -229,6 +255,8 @@ SLI 후보: 과업 성공률(골든셋), 스텝 수 분포(p50/p95), 상한 도�
 - [ ] 폴백 모델이 툴 호출 형식까지 포함해 호환 매트릭스에서 검증되었는가
 - [ ] 등급 3 이상 툴에 승인 요청 → 체크포인트 → 재개 흐름이 있고 만료 시 거부되는가
 - [ ] 트레이스에 스텝별 판정·툴 호출·게이트 판정·버전 키가 있어 트래젝토리를 재구성할 수 있는가
+- [ ] `tool.invoke`에 `error_injected`·`repeat_count`·멱등 키가 남고, 툴 오류 직후 스텝의 답변 근거를 같은 트레이스에서 이어 "지어낸 관찰"을 찾을 수 있는가
+- [ ] 스텝 번호 × 토큰 히트맵·상한 도달률·툴별 오류율이 대시보드 ②에 있고, 상한·툴 알림마다 런북 첫 3단계가 적혀 있는가
 
 ## 최신 트렌드 적용 (최근 1년)
 

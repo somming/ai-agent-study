@@ -223,6 +223,31 @@ SLI 후보: 툴 호출 성공률(툴·서버별), 툴 p95 지연, 멱등 키 충
 
 가장 자주 바뀌는 것: **툴 추가·제거** > 툴 설명 수정 > 등급·정책 > 모델 > 프로토콜. 코드 밖 설정으로 둘 것: 툴 카탈로그, 라우팅 표, 등급·정책 메타데이터, 서버 카탈로그(소유자·SLA), 레이트 리밋·타임아웃 값. 포트·어댑터 뒤에 둘 외부 의존: MCP 서버, 서드파티 API, 모델별 함수 호출 포맷.
 
+### 관측성 — 이 단계에서 무엇을 기록·측정·알림하는가
+
+운영 안정성의 "탐지 신호"가 **실제로 어디서 나오는지**를 설계한다. 기준은 [Part 1/07 관측성 설계 요소](../01-foundations/07-operations-vocabulary.md)와 [Part 5/03](../05-cross-cutting/03-observability-tracing.md). 이 단계는 **부수효과가 생기는 유일한 자리**이므로 `tool.invoke`가 트레이스의 무게 중심이고, 툴 결과는 다음 LLM 호출의 입력이라는 점에서 신뢰 경계·인젝션 플래그를 스팬에 남긴다. 툴 인자·결과 본문은 opt-in, 스팬에는 해시·크기·코드만.
+
+| 기록 대상 | 스팬 / 이벤트 (이름, 부모) | 핵심 속성 (버전 키 포함) | 지표 (→ 어느 SLI) | 샘플링 · 보존 · PII |
+|---|---|---|---|---|
+| 툴 호출 | `tool.invoke {tool}`, 부모 `invoke_agent {name}` | `agent.mcp_server, agent.server_version, agent.tool_schema_version, agent.catalog_version, agent.effect_grade`(읽기 / 쓰기 / 외부 전송 / 파괴적), `agent.error_code, agent.retryable, agent.timeout_layer`(tool / node / run), `agent.result_bytes, agent.result_truncated`, `agent.outcome` | 호출 수·성공률·p95(툴·서버별 → 툴 호출 성공률·p95), 타임아웃률, 오류 코드 분포(`unavailable` 급증이 서버 다운 신호), 반환 크기 p95 | 메타 전수. 인자·결과 본문 opt-in(해시만). 실패·차단·승인 건 전수 |
+| 행동 게이트 | `gate.evaluate tool_gate`, 부모 `tool.invoke`(실행 직전) | `agent.gate_output`(pass / block / approval_required / degrade), `agent.rules_applied[]`(규칙 ID·버전), `agent.rules_version, agent.decision_source, agent.confidence`, `agent.session_flags[]`(external_data_read) | 게이트 출력 4종 분포(툴 등급별), 차단률, 차단 오탐률(샘플 리뷰 → 동명 SLI), 승인 요청률 | 전수. 차단·승인 건 인자 마스킹본 전수 |
+| 멱등·중복 | `tool.invoke`의 이벤트 `idempotency_conflict`, `precheck_mismatch`(조회 후 쓰기 래퍼가 외부 상태 불일치를 봤을 때) | `agent.idempotency_key_hash, agent.external_state_hash, agent.resumed_from_checkpoint_id`([08](08-state-memory-context.md)) | 멱등 키 충돌률(→ 동명 SLI, 충돌 자체는 정상), **실제 중복 실행 건수**(precheck 불일치 후 실행 — 0이어야), 멱등 키 없는 쓰기 툴 호출 수(0이어야) | 전수. 감사 레코드로 복제 |
+| 결과 검증·신뢰 경계 | `verify.schema`(결과·오류 스키마) + `gate.evaluate injection_scan`, 둘 다 부모 `tool.invoke` | `agent.result_trust`(internal / user / external), `agent.injection_flag, agent.source_id, agent.error_normalized`(비구조화 오류를 변환했는지), `agent.degradation[]=send_tools_disabled` | 결과 스키마 검증 실패율(서버별 — 서드파티 무통보 변경 신호), 오류 스키마 변환 실패 수, **인젝션 플래그율(소스별)**, 권한 하향 발동 세션 수 | 플래그 건 결과 본문 전수(마스킹). 그 외 메타만 |
+| 툴 라우팅·노출 | `decision.decide tool_routing`, 부모 `invoke_agent` | `agent.tool_group, agent.tools_exposed_count, agent.decision_source, agent.catalog_version, agent.outcome=tool_not_found` | "툴 찾을 수 없음" 응답률(의도별), 라우팅 재시도율, 라우팅 정확도(오프라인 `eval.run tool_selection` + 온라인 `eval.sample` → 동명 SLI) | 메타 전수, 정확도 샘플 1~5% |
+| 서버 상태·서킷 | 배치 `mcp.health {server}`(헬스체크 트레이스), 이벤트 `circuit.state_change {server}` | `agent.mcp_server, agent.circuit_state`(closed / open / half_open), `agent.failure_rate_window` | 서버별 가용성, 서킷 개방 시간(→ 동명 SLI), 개방 중 저하(캐시 응답) 요청 수, 노출 목록 제거 건수 | 전수 |
+
+| 알림 | 조건 (예시) | 심각도 | 런북 (첫 3단계) |
+|---|---|---|---|
+| MCP 서버 오류 급증 | 서버별 `unavailable` 비율 > 50% 1분(서킷 개방 조건과 동일), 또는 `circuit_state=open` 10분 지속 | P2 (쓰기 툴 포함 서버는 P1) | ① 서버 카탈로그에서 소유 팀·SLA 확인, 자동 통보 도착 확인 ② 노출 목록 제거·읽기 캐시 저하 동작을 저하 요청 수로 확인 ③ 30분 초과 시 수동 처리 안내 전환 결정 |
+| 실제 중복 실행 | `precheck_mismatch` 후 실행 1건, 또는 멱등 키 없는 쓰기 툴 재시도 1건 | P1 | ① 해당 `run_id` 전이 중단 ② 외부 시스템 상태 조회로 중복 건 확정, 보상 트랜잭션 목록 작성(사람 실행) ③ 툴 소유자·사용자에게 통보 |
+| 툴 타임아웃률 | 툴별 타임아웃률 > 5% 10분 | P2 | ① 서버 p95·하류 API 상태 ② 타임아웃 계층(툴 < 노드 < 실행)이 맞게 걸렸는지 `timeout_layer` 분포로 확인 ③ 읽기 툴 부분 결과·캐시 저하 가동 |
+| 인젝션 플래그 급증 | 소스별 플래그율 베이스라인 3배 1시간, 또는 플래그 세션에서 전송 툴 호출이 차단되지 않은 건 1건 | P2 (후자는 P1) | ① 플래그 결과 샘플 리뷰 ② `send_tools_disabled` 저하가 해당 세션에 붙었는지 확인 ③ 소스 차단 여부 보안 책임자 에스컬레이션 |
+| 결과 스키마 검증 실패 | 서버별 실패율 > 2% 15분, 또는 반환 크기 p95 전주 대비 3배 | P2 | ① 서버 버전·스키마 변경 공지 확인 ② 해당 툴 비활성 상태·절단 동작 확인 ③ 계약 테스트 재실행 후 재활성 결정 |
+
+- **대시보드에서 이 단계를 보는 뷰**: ② Action 패널 — 툴·서버별 RED, 타임아웃률, 서킷 상태 타임라인, 결과 스키마 실패율. ③ 비용·판정 분포 — 행동 게이트 출력 4종 분포(툴 등급별 스택), 결정 소스 분포, 툴 결과가 차지하는 컨텍스트 토큰 비중, 승인 요청률.
+- **감사 추적으로 넘기는 필드(관측 로그와 분리)**: 툴 이름·버전, 인자(원문 또는 해시 — PII 정책), 부수효과 등급, 게이트 판정과 적용 규칙 ID·버전, 결정 모델 p, 멱등 키, 실행 결과 코드, 결과 신뢰 등급, 인젝션 플래그, 요청자·테넌트. 관측 스팬에는 인자 해시·결과 코드·크기만.
+- **이 단계의 관측이 없으면 못 보는 장애**: **성공 응답으로 돌아오는 장애** 둘 — 서드파티 서버가 조용히 결과 형식·권한 범위를 바꾼 것(HTTP 200)과 재시도로 생긴 중복 부수효과(두 번 다 성공). 둘 다 RED에는 안 잡히고 결과 스키마 검증·멱등 이벤트가 있어야 보인다. 없으면 고객 민원·정산 불일치로 안다.
+
 ### 거버넌스 접점 — 정책 · 가드레일 · 승인 · 감사
 
 | 항목 | 이 단계에서의 답 |
@@ -242,6 +267,8 @@ SLI 후보: 툴 호출 성공률(툴·서버별), 툴 p95 지연, 멱등 키 충
 - [ ] 외부 데이터를 읽은 세션에서 전송 툴 권한 하향이 동작하는가
 - [ ] 등급 5 행동이 코드 구조상 자동 실행될 수 없는가
 - [ ] 게이트 판정·규칙 버전·멱등 키가 감사 레코드에 남는가
+- [ ] `tool.invoke` 스팬에 `agent.mcp_server`·`agent.tool_schema_version`·멱등 키 해시·게이트 출력·결과 신뢰 등급이 있고, 서버별 서킷 상태 변화가 이벤트로 남는가
+- [ ] 실제 중복 실행(precheck 불일치 후 실행) 1건을 P1으로 올리는 알림과, 결과 스키마 검증 실패율(서드파티 무통보 변경) 알림이 런북과 함께 있는가
 
 ## 최신 트렌드 적용 (최근 1년)
 

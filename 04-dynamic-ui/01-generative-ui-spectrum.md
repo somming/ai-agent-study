@@ -179,6 +179,31 @@ SLI 후보: 패턴별 폴백률(원인별), 트리 검증 실패율, 샌드박�
 
 가장 자주 바뀌는 것: 프로토콜 버전(반년 단위) > 컴포넌트 추가 > 패턴 배정 자체(드묾). 코드 밖 설정으로 둘 것: 의도 유형 → 패턴 배정표, 트리 제약 상한, 샌드박스 정책. 포트·어댑터 뒤에 둘 외부 의존: AG-UI·A2UI·MCP Apps SDK 전부.
 
+### 관측성 — 이 단계에서 무엇을 기록·측정·알림하는가
+
+운영 안정성의 "탐지 신호"가 **실제로 어디서 나오는지**를 설계한다. 기준은 [Part 1/07 관측성 설계 요소](../01-foundations/07-operations-vocabulary.md)와 [Part 5/03](../05-cross-cutting/03-observability-tracing.md). 이 페이지의 관측 단위는 **패턴**이다 — 모든 Interaction 스팬에 `agent.pattern`(controlled / declarative / open_ended)을 붙여야 "어느 통제 수준이 비용을 내고 있는가"를 분해할 수 있다.
+
+| 기록 대상 | 스팬 / 이벤트 (이름, 부모) | 핵심 속성 (버전 키 포함) | 지표 (→ 어느 SLI) | 샘플링 · 보존 · PII |
+|---|---|---|---|---|
+| 패턴 판정 | `ui.map` (부모 `invoke_agent`) | `agent.pattern`, `agent.intent_type`, `agent.component`, `agent.decision_source`, `agent.catalog_version`, `agent.fallback_reason`(`unsupported_component` 등) | 패턴별 요청 분포, 폴백률(원인별) → "Controlled 폴백률" SLI | 메타 전수 |
+| 트리 검증 (Declarative) | `ui.validate` (부모 `ui.map`), `agent.validator=tree` | `agent.validation_result`, `agent.violation_code[]`(schema / constraint / a11y / **`action_component_in_tree`**), `agent.tree_hash`, 노드 수, 검증기 규칙 버전, `agent.model_version`·`agent.prompt_version` | 트리 검증 실패율(코드별) → "Declarative 검증 실패율"; 경계 위반 건수(=0) SLI | 메타 전수. 실패 트리 본문은 opt-in 저장소에 참조만 |
+| 샌드박스 로드 (Open-ended) | 클라이언트 보고 `ui.render {iframe}` (부모 `ui.stream`, trace context 전파) | `agent.provider_id`, 위젯 출처, `agent.render_result`(ok / timeout / csp_blocked), 로드 ms, `agent.renderer_version`, `agent.platform` | 샌드박스 로드 성공률(제공자별) SLI | 실패 전수, 성공은 샘플(예시 10%) |
+| CSP 위반 리포트 | 이벤트 `ui.csp_report` — 브라우저 `report-to`가 수집기로 직접 보내므로 **trace context가 없다**. 리포트 엔드포인트 경로에 `agent.provider_id`를 넣어 제공자·세션 해시로 조인 | 제공자, 위반 지시어, 차단 URI 해시, 정책 버전 | 제공자별 CSP 위반 건수 | 전수, URI는 해시 |
+| 상쇄 수단 헬스 | 검증기·샌드박스 정책 서비스 헬스체크(요청 밖 지표) + 요청 쪽 `agent.fallback_reason=validator_unavailable` | 서비스명·버전 | 검증기 가용성, fail-closed 폴백 건수 | 전수 |
+| 폴백 고지 표시 | 클라이언트 보고 `ui.render {notice}` | `agent.degradation_displayed`, 고지 토큰 키([09](09-ux-accessibility.md)) | 폴백 고지 표시율 → [10](10-evaluation-genui.md) 저하 플래그 표시율 | 전수 |
+
+| 알림 | 조건 (예시) | 심각도 | 런북 (첫 3단계) |
+|---|---|---|---|
+| Controlled 표현력 부족 | 의도별 `unsupported_component` 폴백률 > 예시 20%가 2주 지속(주간 리뷰 알림) | P3 | ① 의도별 폴백 분포 확인 ② opt-in 본문 샘플 열람 ③ 컴포넌트 추가 vs 그 의도만 Declarative 전환을 안건화 |
+| Declarative 검증 실패 폭증 | 실패율 > 예시 10%, 15분. 배포 마커 직후 민감도 상향 | P2 | ① `violation_code`별 분해 ② 모델·프롬프트 버전 변경 확인 ③ 해당 의도를 Controlled 기본 컴포넌트로 저하하는 플래그 → 롤백 판단 |
+| Open-ended 로드 실패 | 제공자별 로드 성공률 < 예시 95% 10분, 또는 CSP 위반 기준선 3배 | P2 | ① 제공자·출처 분리 ② 위반 지시어 확인(정책 완화 금지) ③ 제공자 킬 스위치 |
+| 패턴 경계 위반 | `action_component_in_tree` ≥ 1건 | **P1** | ① 해당 `request_id` 트레이스 열람 ② 매핑 테이블의 의도 행 확인 ③ 해당 의도의 Declarative 비활성 + 설계 결함 등록 |
+| 상쇄 수단 다운 | 헬스체크 실패 또는 `validator_unavailable` 폴백 ≥ 1건/분 | **P1** | ① fail-closed 확인(Declarative·Open-ended 렌더 0건) ② 서비스 재시작·롤백 ③ 저하 배너 표시 확인 |
+
+**대시보드에서 이 단계를 보는 뷰**: ① E2E의 폴백율을 패턴 × 원인으로 분해한 패널 / ② Interaction 패널의 "패턴별 검증 실패율·샌드박스 로드 성공률".
+**감사 추적으로 넘기는 필드(관측 로그와 분리)**: 응답별 적용 패턴, 검증기 버전·결과, 폴백 원인 코드, Open-ended 제공자·출처 — 거버넌스 표와 같은 목록을 트레이스에서 추출해 별도 저장소에 둔다.
+**이 단계의 관측이 없으면 못 보는 장애**: 패턴 경계 위반. 승인 버튼이 생성 트리 안에 들어가도 **렌더는 성공**하므로 사용자 불만도 오류도 없다 — `ui.validate`의 `violation_code` 없이는 영원히 모른다.
+
 ### 거버넌스 접점 — 정책 · 가드레일 · 승인 · 감사
 
 | 항목 | 이 단계에서의 답 |
@@ -197,6 +222,8 @@ SLI 후보: 패턴별 폴백률(원인별), 트리 검증 실패율, 샌드박�
 - [ ] 패턴별 폴백률·검증 실패율이 원인별로 집계되고 SLO가 선언돼 있는가
 - [ ] Open-ended를 열었다면 제공자별 킬 스위치가 배포 없이 동작하는가
 - [ ] 의도적으로 축소한 패턴 범위와 재검토 조건이 기술 부채로 기록돼 있는가
+- [ ] `ui.validate`가 패턴 경계 위반을 `action_component_in_tree` 코드로 발행하고 1건에 P1 알림이 나가는가
+- [ ] CSP 위반 리포트(trace context 없음)가 제공자 ID로 트레이스와 조인되는가
 
 ## 최신 트렌드 적용 (최근 1년)
 

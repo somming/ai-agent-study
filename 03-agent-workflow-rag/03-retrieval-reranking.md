@@ -205,6 +205,31 @@ SLI 후보: recall@N·precision@k(샘플), 검색 단계 p95, 리랭킹 생략�
 
 가장 자주 바뀌는 것: 지식(인덱스 갱신, 일 단위) > 검색 파라미터(N·k·θ) > 임베딩·리랭커 모델(분기~연) > 벡터DB. 코드 밖 설정으로 둘 것: RRF k, top-N, top-k 규칙, 유형별 θ, 압축 on/off, 그래프 홉·이웃 상한·관계 허용 목록, 타임아웃. 포트·어댑터 뒤에 둘 외부 의존: 벡터DB, BM25 엔진, 임베딩 API, 리랭커 서빙, 그래프DB, ACL 서비스.
 
+### 관측성 — 이 단계에서 무엇을 기록·측정·알림하는가
+
+운영 안정성의 "탐지 신호"가 **실제로 어디서 나오는지**를 설계한다. 기준은 [Part 1/07 관측성 설계 요소](../01-foundations/07-operations-vocabulary.md)와 [Part 5/03](../05-cross-cutting/03-observability-tracing.md). 이 단계의 관측에는 다른 단계에 없는 원칙이 하나 있다. **ACL 게이트 스팬이 없는 검색 스팬은 그 자체가 인시던트**다 — 오류가 아니라 "스팬의 부재"를 세어야 하므로, 수집 측에서 `retrieval.search`마다 선행 `gate.evaluate acl_prefilter`가 있는지 턴 종료 시 검증한다.
+
+| 기록 대상 | 스팬 / 이벤트 (이름, 부모) | 핵심 속성 (버전 키 포함) | 지표 (→ 어느 SLI) | 샘플링 · 보존 · PII |
+|---|---|---|---|---|
+| ACL pre-filter | `gate.evaluate acl_prefilter` (부모 `invoke_agent`, 모든 `retrieval.search` **앞**) | `agent.acl_applied`(항상 true), `agent.subject_set_hash`, `agent.rules_version`(ACL 규칙), `agent.acl_source`(live/cache), ACL 조회 지연, `agent.outcome`=blocked(fail-closed 발동) | **ACL 필터 적용률**(= `acl_prefilter` 스팬을 가진 `retrieval.search` 비율, 항상 100%), ACL 조회 오류율·p95, ACL 캐시 히트율, fail-closed 발동 건수 → ACL 서비스 다운 | **전수**(샘플링 금지), 주체 ID는 해시만 |
+| 인덱스별 검색 | `retrieval.search {dense·bm25·graph}` (부모 `invoke_agent`, 병렬 자식) | `agent.index_version`(인덱스별 — 두 인덱스의 값을 턴 종료 시 비교), `agent.embedding_model_version`(질의 임베딩), `agent.candidate_count`, `agent.top_score`, `agent.filter_keys[]`, `agent.circuit_state`, `agent.degradation[]`=`dense_unavailable`·`bm25_unavailable`·`graph_truncated`, `agent.index_pinned_version`(공통 버전 핀) | 인덱스별 오류율·p95, **검색 단계 p95**(병렬 합), **후보 0 비율**, 최고 점수 분포(히스토그램 — 이동 감지), **인덱스 버전 불일치 건수**(dense vs BM25 `index_version` 상이) → 벡터DB·BM25 다운, 신선도 불일치, 후보 0 급증 | 메타 전수, 질의 임베딩·본문은 기록하지 않음 |
+| 그래프 탐색 | `retrieval.search graph` 자식 `retrieval.traverse` | `agent.hop_count`, `agent.visited_nodes`, `agent.relation_types[]`, `agent.limit_hit`(nodes/time), `agent.schema_version`(그래프 스키마) | 탐색 노드 수 분포, 노드·시간 상한 도달률 → 그래프 탐색 폭발 | 메타 전수 |
+| 리랭킹·컷오프 | `retrieval.rerank` (부모 `invoke_agent`) | `agent.reranker_version`, `agent.input_count`(N), `agent.output_count`(k), `agent.threshold`(유형별 θ), `agent.rerank_skipped`, `agent.degradation[]`=`rerank_skipped`, 점수 요약(최고·p50·θ 미달 수) | 리랭커 p95·오류율·타임아웃 카운트, **리랭킹 생략률**, θ 미달 비율, **precision@k**(샘플 라벨, 비동기 링크) → 리랭커 타임아웃·다운 | 메타 전수, 후보 본문 없음(ID·점수만) |
+| 근거 조립·압축 | `retrieval.assemble` (부모 `invoke_agent`) | `agent.evidence_ids[]`, `agent.evidence_count`, `agent.context_tokens`, `agent.compression`(none/extractive/summary), 근거 단위 스키마 버전, 모든 저하 플래그의 합집합(→ [04](04-generation-grounding.md)로 전달) | **recall@N**(샘플 라벨, 오프라인 골든셋 + 운영 샘플), 컨텍스트 예산 초과율, 저하 플래그 전달률(=100%) | ID 전수, 청크 본문 opt-in(예시 1~5%), 후보 0·저하 건은 전수 |
+| 결과 캐시 | 이벤트 `cache.lookup` / `cache.invalidate` (부모 `invoke_agent`; 삭제 레인 소비는 배치 `sync.*`) | `agent.cache_hit`, 캐시 키 구성 버전(정규화 질의·필터·인덱스 버전·주체 집합 해시), 무효화 원인(index_version/tombstone/acl_event)·원천 이벤트 ID, 히트 시 ACL 재확인 여부 | 캐시 히트율, **삭제 이벤트 → 결과 캐시 제거 p95**, 히트 응답 ACL 재확인률(=100%) | 전수, 키·질의는 해시만 |
+
+| 알림 | 조건 (예시) | 심각도 | 런북 (첫 3단계) |
+|---|---|---|---|
+| **ACL 적용률 미달·조회 장애** | `acl_prefilter` 없는 `retrieval.search` 1건 이상, 또는 ACL 조회 오류율 > 0 | **P1 즉시 온콜** | ① fail-closed 동작 확인 — `agent.outcome=blocked` 증가와 필터 없는 검색 스팬 0건을 동시에 확인 ② 적용률 미달이면 해당 요청 ID를 보안 책임자에게 인시던트로 이관(유출 검토) ③ ACL 서비스 상태·캐시 TTL 확인, abstain 고지가 사용자에게 보이는지 확인 |
+| 인덱스 저하·그래프 절단 지속 | `dense_unavailable`·`bm25_unavailable` 5분 지속, 또는 그래프 상한 도달률 10% 초과 | P2 | ① 해당 인덱스 서킷 상태·p95 확인 ② 저하 플래그가 `retrieval.assemble`을 거쳐 [04](04-generation-grounding.md)에 전달되는지 확인 ③ 그래프면 홉·이웃 상한 하향, 인덱스면 공통 버전 핀 적용 |
+| 리랭킹 생략률 상승 | `rerank_skipped` 비율 20%가 10분 지속 | P2 | ① 리랭커 서빙 p95·포화(요청 수 × N) 확인 ② 후보 수 N 임시 축소(예시 50 → 30) ③ 고정 k 운영 중 precision 샘플 추적, 복구 후 θ 재적용 확인 |
+| 후보 0·점수 분포 이동 | 후보 0 비율 10% 초과, 또는 최고 점수 히스토그램이 베이스라인에서 이동 | P2 | ① 임베딩 모델 버전과 인덱스 임베딩 버전 일치 확인 ② [02](02-query-understanding.md) 필터 추출 완화 비율 확인 ③ 인덱스 신선도([Part 2/07](../02-data-pipeline/07-freshness-and-sync.md)) 확인 |
+| 인덱스 버전 불일치 | dense·BM25 `index_version` 상이 1건 이상(즉시) | P2 | ① 어느 인덱스가 뒤처졌는지 확인 ② 최신 공통 버전으로 핀이 적용되었는지 확인 ③ 동기화 지연 원인은 [Part 2/07](../02-data-pipeline/07-freshness-and-sync.md) 런북으로 이관 |
+
+대시보드에서 이 단계를 보는 뷰: ② Reasoning 패널의 "검색" 서브패널 — 인덱스별 p95·오류율, 후보 0 비율, 리랭킹 생략률, 최고 점수 히스토그램, **ACL 적용률 게이지(100% 고정이어야 함)**, 인덱스 버전 불일치 카운터 / ① E2E — 저하율 중 검색 저하 코드 분해 / ③ 비용 — 리랭커 추론 수(요청 수 × N) 추이, 캐시 히트율.
+감사 추적으로 넘기는 필드(관측 로그와 분리): 적용 필터(주체 집합 해시·ACL 규칙 버전·메타데이터 필터), 인덱스 버전 3종, 임베딩·리랭커 모델 버전, 후보 ID·점수·순위, 컷오프 θ, 저하 플래그, 캐시 히트 여부 — 거버넌스 접점 표와 동일.
+이 단계의 관측이 없으면 못 보는 장애: **필터가 조용히 빠진 검색** — 사용자 증상이 없고(답변이 오히려 좋아 보인다) 오류율도 0이다. `gate.evaluate acl_prefilter` 스팬의 **부재**를 세지 않으면 데이터 유출은 사후 감사나 외부 신고로만 발견된다. 그리고 **두 인덱스의 신선도 불일치** — 같은 문서가 한쪽에만 있어도 recall은 조금 낮아질 뿐이라 인덱스별 `index_version` 비교 없이는 영구히 모른다.
+
 ### 거버넌스 접점 — 정책 · 가드레일 · 승인 · 감사
 
 | 항목 | 이 단계에서의 답 |
@@ -223,6 +248,8 @@ SLI 후보: recall@N·precision@k(샘플), 검색 단계 p95, 리랭킹 생략�
 - [ ] 리랭커 교체 시 θ 재보정 절차가 있고, 유형별 θ가 설정으로 관리되는가
 - [ ] 캐시 키에 테넌트·필터·인덱스 버전·주체 집합 해시가 포함되고, TTL ≤ 주체 해석 TTL이며, 문서 톰스톤·ACL 이벤트가 캐시를 무효화하는가 (불균형 ①·② 반영)
 - [ ] 트레이스에 적용 필터·인덱스 버전·후보 점수가 있어 "그때 왜 그 문서가 나왔나"를 재구성할 수 있는가
+- [ ] `retrieval.search`마다 선행 `gate.evaluate acl_prefilter` 스팬의 존재를 턴 종료 시 검증하고, 부재 1건이 P1 알림·인시던트가 되는가
+- [ ] 인덱스별 `agent.index_version`을 비교해 불일치 건수를 세고, 저하 플래그가 `retrieval.assemble`을 거쳐 [04](04-generation-grounding.md)로 전달되는 비율(=100%)을 측정하는가
 
 ## 최신 트렌드 적용 (최근 1년)
 

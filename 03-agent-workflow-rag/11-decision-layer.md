@@ -218,6 +218,31 @@ SLI 후보: 결정 모델 가용성(성공 응답 비율), p95 지연(수백 ms 
 
 가장 자주 바뀌는 것: **θ와 질문 정의(규칙·정책)** > 평가셋 > 결정 모델 벤더·버전 > 온톨로지. 결정 모델 벤더 교체는 드물지만 영향이 가장 넓으므로 `decide()` 포트와 섀도 절차를 처음부터 둔다. 코드 밖 설정으로 둘 것: 질문 정의, θ 표, 폴백 순서, 타임아웃, 캐시 TTL, 지점별 호출 예산. 포트·어댑터 뒤에 둘 외부 의존: 결정 모델 API(둘 다), 분류기 서빙, 소형 LLM.
 
+### 관측성 — 이 단계에서 무엇을 기록·측정·알림하는가
+
+운영 안정성의 "탐지 신호"가 **실제로 어디서 나오는지**를 설계한다. 기준은 [Part 1/07 관측성 설계 요소](../01-foundations/07-operations-vocabulary.md)와 [Part 5/03](../05-cross-cutting/03-observability-tracing.md). 결정 레이어의 장애는 대부분 **오류 없이** 온다 — API는 응답하고 지연도 정상인데 θ가 현실과 어긋나는 것이다. 그래서 이 단계의 1차 신호는 RED가 아니라 **지점별 확신도 분포·결정 소스 분포·폴백률**이고, 보정(ECE)은 주기적으로 재측정하는 지표다. 결정 모델 스팬은 출력 토큰이 없어 `gen_ai.*` 매핑이 얕으므로 `agent.*` 자체 속성이 주가 된다.
+
+| 기록 대상 | 스팬 / 이벤트 (이름, 부모) | 핵심 속성 (버전 키 포함) | 지표 (→ 어느 SLI) | 샘플링 · 보존 · PII |
+|---|---|---|---|---|
+| 판정 1건 | `decision.decide {question}`, 부모 `invoke_agent {name}`(배치 지점 #1~#5) | `agent.decision_point_id, agent.question_version, agent.decision`(선택), `agent.confidence`(선택 p), `agent.confidence_dist_hash`(분포 전체는 감사로), `agent.threshold_high / threshold_low, agent.route`(auto / clarify / human), `agent.decision_source`(rule / decision_model / classifier / llm), `agent.impl_version, agent.model_version, agent.rules_version`(후속 규칙 게이트) | 지점별 호출 수·오류율·p95(→ 가용성·p95 SLI), **확신도 히스토그램**(지점·버전별, 0.05 버킷), **세 갈래 비율**(→ 동명 SLI), **결정 소스 분포**(규칙이 얼마나 가로채나) | 메타 **전수, 샘플링 없음**(보정 재측정의 모집단). 입력 본문 opt-in(해시) |
+| 폴백·저하 | `decision.decide` 속성 `agent.outcome=fallback` + `agent.fallback_reason`(timeout / error / rate_limited / circuit_open / enum_invalid), `agent.fallback_impl`(rule / cache / conservative), `agent.degradation[]=decision_fallback` 또는 `routing_fallback`(계약 ②) | 지점 ID, 보수적 경로 방향(승인 필요 / 범위밖 / 기본 경로) | **폴백률**(지점별 → 동명 SLI), 429 비율, 서킷 개방 시간, 보수적 경로 유입량(→ [12](12-guardrails-hitl.md) 승인 큐의 선행 신호) | 폴백 건 전수 |
+| 보정 모니터링 | 오프라인 `eval.run calibration {question}` — **주 1회 예시 + 벤더 모델 업데이트 공지 시 즉시 + 질문·θ 버전 변경 시**; 온라인 `eval.sample`(사람 최종 라벨이 붙은 턴) | `agent.eval_suite_version, agent.evalset_version, agent.question_version, agent.ece, agent.bins[]`(버킷별 평균 p·실제 양성률·표본 수) | **지점별 ECE**(→ 동명 SLI), 신뢰도 곡선의 버킷별 이동, 라벨 표본 수(신뢰구간) | 전수(결과는 작음). 라벨 표본은 환류 후보로 보존 |
+| 사람 판정 환류 | `approval.resolve`(#4), 명확화 응답 `ui.event`(#1·#3), 사후 리뷰 라벨을 `request_id`로 `decision.decide`에 조인 | `agent.human_label, agent.label_source`(approval / clarify / review), `agent.label_lag_ms` | 사람 판정 불일치율(→ 동명 SLI), #4 승인 후 되돌림률, 라벨 지연(보정 재측정이 얼마나 최신인가) | 전수 — 평가셋 환류 후보 |
+| 섀도 비교 | `decision.decide {question}`의 자식 `decision.decide {question}:shadow`(기록만, 경로에 영향 없음) | `agent.shadow_impl, agent.shadow_version, agent.shadow_choice, agent.shadow_mismatch` | 섀도 불일치율(일·주, 지점별), 야간 `eval.run routing_l2` 정확도 | 불일치 건 전수 |
+| 질문 정의 검증·외부 전송 PII | `verify.schema`(반환값이 선택지 enum 안인지), `gate.evaluate pii_outbound`(결정 모델로 보내는 상태의 스캔), 둘 다 부모 `decision.decide` | `agent.enum_invalid, agent.question_version, agent.pii_flag, agent.pii_masked, agent.fields_dropped[]` | 선택지 분포(지점·질문 버전별 — 급변이 배포 오류 신호), enum 밖 반환률, 전송 전 PII 플래그율·차단률 | 플래그 건 전수(마스킹). 전송 본문은 기록하지 않음 |
+
+| 알림 | 조건 (예시) | 심각도 | 런북 (첫 3단계) |
+|---|---|---|---|
+| 폴백률 | 지점별 폴백률 > 20% 5분(SLO 2% 대비) | P1 (#4 승인 판정 포함) / P2 | ① `fallback_reason` 분포로 timeout·429·circuit 구분 ② 벤더 상태·레이트 한도 확인 ③ 보수적 경로 유입에 따른 승인 큐·"범위밖" 응답 증가를 [12](12-guardrails-hitl.md) 대시보드에서 확인 |
+| 확신도 분포 드리프트 | 지점별 확신도 히스토그램의 7일 이동 PSI > 0.2, 또는 세 갈래 비율이 지점 범위(예시: #1 자동 85~95%) 이탈 1일 | P2 | ① θ 보수적 자동 이동이 발동했는지, 완화 방향 이동이 없었는지 확인 ② 섀도 불일치율을 같이 봐서 입력 분포 변화인지 벤더 모델 변경인지 분리 ③ ECE 즉시 재측정 예약, 결과까지 θ 완화 금지 |
+| ECE 상승 | 재측정에서 #4 ECE > 0.05, 또는 어느 지점이든 전주 대비 +0.02 | P2 | ① 평가셋 버전·신규 라벨 유입량 확인(표본 부족인지) ② 깨진 버킷 식별(고확신 구간이면 미탐 위험) ③ θ 재설정 제안서 — 완화 방향은 사람 결정 + 사후 샘플 감사 |
+| 섀도 불일치 | 일 불일치율 > 베이스라인 +5%p | P2 | ① 벤더 변경 공지·`model_version` 변화 확인 ② 이전 구현체 자동 전환 동작 확인(결정 모델은 섀도로 강등) ③ 평가셋 재측정 후 복귀 결정 |
+| 질문 정의 배포 오류 | `enum_invalid` 1건 이상, 또는 한 선택지 비중이 1시간 내 ±30%p | P2 | ① 직전 `question_version` 롤백 발동 확인 ② 질문 정의 diff(선택지 누락·오타) ③ 질문 소유자 통보, 영향 구간의 판정 재처리 여부 결정 |
+
+- **대시보드에서 이 단계를 보는 뷰**: **③ 비용·판정 분포가 이 페이지의 주 화면** — 지점별 확신도 히스토그램(현재 vs 7일 전 겹침), 결정 소스 분포(rule / decision_model / classifier / llm), 세 갈래 비율 추이, 폴백률·폴백 사유, 지점별 호출 비용. ② Reasoning 패널 — 지점별 RED, ECE 추이(재측정 시점 표시), 섀도 불일치율.
+- **감사 추적으로 넘기는 필드(관측 로그와 분리)**: "트레이스 기록 항목" 전체 — `decision_point_id, question_version`, 입력 해시, 선택지 목록, **확률 분포 전체**, 적용 θ, 결과 경로, 규칙 게이트 결과, 구현체·모델 버전, 폴백 여부·사유, 사람 최종 판정. **샘플링 없이 장기 보존**(#4 필수). 관측 스팬에는 선택 p와 분포 해시만.
+- **이 단계의 관측이 없으면 못 보는 장애**: **보정 드리프트**. 오류율 0%, p95 정상인데 θ가 어긋나 자동 비율이 슬금슬금 늘고(미탐 증가) 또는 줄어(승인 피로) 간다. 지점별 확신도 히스토그램과 사람 라벨 조인이 없으면 수주 뒤 사고 또는 승인자 불만으로만 안다. 결정 소스 분포가 없으면 "규칙이 다 가로채서 결정 모델이 사실상 꺼져 있는" 상태도 못 본다.
+
 ### 거버넌스 접점 — 정책 · 가드레일 · 승인 · 감사
 
 | 항목 | 이 단계에서의 답 |
@@ -237,6 +262,8 @@ SLI 후보: 결정 모델 가용성(성공 응답 비율), p95 지연(수백 ms 
 - [ ] 등급 4~5 행동이 결정 모델 결과와 무관하게 규칙으로 고정되어 있는가
 - [ ] 결정 모델로 전송되는 상태에 PII 마스킹이 있고 데이터 처리 계약을 확인했는가
 - [ ] 판정 트레이스가 샘플링 없이 감사 저장소에 장기 보존되는가(#4 승인 판정 필수)
+- [ ] 지점별 확신도 히스토그램·결정 소스 분포·폴백률이 대시보드 ③에 있고, 분포 드리프트(PSI) 알림이 θ 보수적 자동 이동과 연결되어 있는가
+- [ ] ECE 재측정이 `eval.run calibration {question}`으로 자동화되어 주기(주 1회 예시)·벤더 변경 공지·질문/θ 버전 변경 시 돌고, 사람 라벨이 `request_id`로 판정 스팬에 조인되는가
 
 ## 최신 트렌드 적용 (최근 1년)
 

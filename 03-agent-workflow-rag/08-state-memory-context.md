@@ -220,6 +220,32 @@ SLI 후보: 체크포인트 쓰기 성공률, 재개 성공률(HITL 대기 후 �
 
 가장 자주 바뀌는 것: **메모리 내용(지식)** > 컨텍스트 조립 임계값 > 상태 스키마 > 프레임워크. 코드 밖 설정으로 둘 것: 예산 배분 표, 축소 우선순위, 관련도 임계값, 사용자당 항목 상한, 보존 기간. 포트·어댑터 뒤에 둘 외부 의존: 체크포인트 저장소, 메모리 저장소, 요약 모델, 프레임워크 상태 클래스.
 
+### 관측성 — 이 단계에서 무엇을 기록·측정·알림하는가
+
+운영 안정성의 "탐지 신호"가 **실제로 어디서 나오는지**를 설계한다. 기준은 [Part 1/07 관측성 설계 요소](../01-foundations/07-operations-vocabulary.md)와 [Part 5/03](../05-cross-cutting/03-observability-tracing.md). 이 단계의 특수성은 두 가지다 — 상태·메모리 **본문은 스팬에 넣지 않고 ID·개수·해시만** 남기며, 메모리 쓰기는 응답 경로 밖(비동기)이므로 원 턴의 트레이스에 **링크**로 잇는다.
+
+| 기록 대상 | 스팬 / 이벤트 (이름, 부모) | 핵심 속성 (버전 키 포함) | 지표 (→ 어느 SLI) | 샘플링 · 보존 · PII |
+|---|---|---|---|---|
+| 체크포인트 쓰기·복원 | `state.checkpoint`(전이마다) / `state.restore`(재개 시), 부모 `invoke_agent {name}` | `run_id, checkpoint_id, agent.state_schema_version, agent.checkpoint_bytes, agent.incremental`(변경 필드만 여부), `agent.tool_calls_in_flight[]`(복원 시 마지막 툴 호출 상태), `agent.outcome`, `tenant_id` | 쓰기 성공률·오류율·p95(→ 체크포인트 쓰기 성공률), 재개 성공률(HITL 대기 후 `restore` 성공 비율 → 재개 성공률), 쓰기 지연(흐름·적체) | 메타 전수. 상태 본문은 저장소에만(참조 ID). 실패·재개 건 전수 보존 |
+| 재개 후 중복 부수효과 | `tool.invoke {tool}`의 이벤트 `idempotency_conflict`에 `agent.resumed_from_checkpoint_id` 전파([09](09-tools-and-mcp.md) 멱등 규약) | `agent.idempotency_key_hash, checkpoint_id` | 재개 건 중 멱등 키 충돌률, 조회 후 재호출 발생 수 | 전수, 감사와 겸함 |
+| 메모리 읽기·주입 | `memory.read`, 부모 `invoke_agent` | `agent.memory_ids_injected[]`, `agent.memory_count`, `agent.memory_relevance_min`, `agent.memory_conflicts_resolved`, `agent.degradation[]=memory_skipped`(타임아웃 시), `tenant_id` | 읽기 p95·타임아웃률(→ 메모리 읽기 p95), 턴당 주입 건수 분포, 충돌 해소 횟수 추이(품질) | 메모리 값 본문 opt-in(해시만). 타임아웃·테넌트 불일치 차단 건 전수 |
+| 메모리 쓰기(비동기 큐) | `memory.write`, 비동기 작업 트레이스의 루트 — 원 `turn`에 스팬 링크 | `agent.memory_record_id, agent.extraction_rules_version, agent.pii_masked, agent.queue_wait_ms, agent.outcome`(blocked = PII·금지 항목·테넌트 불일치) | 쓰기 큐 깊이·대기 p95(흐름·적체 — "최근 턴 기억이 다음 세션에 없음"의 선행 신호), 쓰기 차단률(품질) | 메타·차단 건 전수. 값 본문은 저장소에만 |
+| 메모리 삭제 전파 | 이벤트 `memory.delete`([Part 2/07](../02-data-pipeline/07-freshness-and-sync.md) 삭제 레인 소비자) | `source_event_id, source_event_ts, agent.records_removed, agent.caches_invalidated, tenant_id` | 삭제 이벤트 → 메모리 제거 p95(→ 동명 SLI), 미처리 잔량·DLQ 크기(흐름·적체) | 전수. 감사 레코드로 복제 |
+| 컨텍스트 조립·축소 | `context.assemble`, 부모 `invoke_agent` | `agent.context_tokens, agent.context_budget, agent.trimmed_items[]`(종류·개수·우선순위), `agent.prompt_version, agent.model_version`(예산 프로파일 키) | 턴당 컨텍스트 토큰 p95(→ 동명 SLI), 예산 초과 축소 발생률(경로별), 상한 도달 "대화 나누기" 안내율 | 메타 전수. 조립된 메시지 본문 opt-in |
+| compaction과 효과 측정 | `memory.compact`(자식 `verify.rules` = 요약 전후 필드 불일치 검사), 부모 `invoke_agent`; 온라인 `eval.sample`에 `ui.event` 피드백을 `request_id`로 조인 | `agent.compaction.strategy`(summary / promote), `agent.compaction.field_mismatch_count, agent.promoted_fields[]`, 요약 모델 버전; 샘플에는 `agent.memory_count`와 피드백 라벨 | 필드 불일치 검사 실패율·요약 검증 샘플 불합격률(품질), compaction 호출 수·비용(RED), **메모리 주입 건의 부정 피드백률(no-memory 대비 → 동명 SLI)** | 불일치 건은 요약 전후 본문 전수. 효과 샘플 1~5%, 부정 피드백 건 전수 |
+
+| 알림 | 조건 (예시) | 심각도 | 런북 (첫 3단계) |
+|---|---|---|---|
+| 체크포인트 쓰기 장애 | `state.checkpoint` 오류율 > 1% 5분 지속, 또는 p95 > 500ms 10분 | P1 | ① 저장소 헬스·IOPS·파티션 핫스팟 확인 ② "새 전이 중단 + 읽기 전용 저하" 동작을 저하율로 확인 ③ 쓰기 툴 포함 실행 목록 추출, 자동 재개 차단 상태 확인 |
+| 메모리 오염 의심 | 메모리 주입 건 부정 피드백률이 no-memory 대비 베이스라인 +3%p(7일 이동), 또는 충돌 해소 횟수 2배 | P2 | ① `extraction_rules_version` 변경 시점과 겹치는지 확인 ② 부정 피드백 건의 `memory_ids_injected[]` 샘플 20건 리뷰 ③ 에피소드 메모리 킬 스위치 가동 여부를 메모리 소유자가 결정 |
+| compaction 불일치 | `field_mismatch_count > 0` 비율 > 0.5% 1시간 | P2 | ① 요약 모델·프롬프트 버전 변경 확인 ② "구조화 승격분만 유지" 모드 전환 ③ 영향 세션 목록 추출, 재처리 여부 결정 |
+| 메모리 읽기 저하 | `degradation=memory_skipped` 비율 > 5% 15분 | P2 | ① 저장소 지연·인덱스 상태 ② 사용자당 항목 상한 초과 테넌트 확인 ③ 타임아웃 임시 상향은 사람 결정 |
+| 삭제 전파 지연 | 삭제 이벤트 → 제거 p95 > SLO 1시간, 또는 DLQ 잔량 증가 | P2 (PII 포함 테넌트는 P1) | ① 소비자 프로세스 상태·오프셋 ② DLQ 건 재처리 ③ 영향 레코드 수·테넌트를 데이터 소유자에 보고 |
+
+- **대시보드에서 이 단계를 보는 뷰**: ② Reasoning 패널 — 체크포인트 쓰기 성공률·p95, 재개 성공률, 메모리 읽기 p95·저하율, 턴당 컨텍스트 토큰 p95, compaction 불일치율. ③ 비용·판정 분포 — compaction 호출 비용 비중, 컨텍스트 토큰 분포(축소 발생 구간 표시), 메모리 쓰기 큐 대기.
+- **감사 추적으로 넘기는 필드(관측 로그와 분리)**: `run_id, checkpoint_id, state_schema_version`, 컨텍스트 조립의 포함·제외 항목 ID와 사유, 주입된 메모리 ID 목록, 메모리 쓰기 레코드(출처 턴·추출 규칙 버전), compaction 승격 필드, 삭제 요청 처리 결과. 관측 스팬에는 개수·해시·버전만 남는다.
+- **이 단계의 관측이 없으면 못 보는 장애**: 메모리가 **조용히 틀려가는 것**. 오염된 메모리와 누적된 요약 오류는 오류율·지연 어디에도 안 잡힌다 — 주입 메모리 ID와 사용자 피드백의 조인, 요약 전후 불일치 검사가 없으면 "그런 말 한 적 없다"는 불만이 쌓인 뒤에야 안다. 삭제 전파 지연도 마찬가지로 민원·감사에서만 드러난다.
+
 ### 거버넌스 접점 — 정책 · 가드레일 · 승인 · 감사
 
 | 항목 | 이 단계에서의 답 |
@@ -240,6 +266,8 @@ SLI 후보: 체크포인트 쓰기 성공률, 재개 성공률(HITL 대기 후 �
 - [ ] 체크포인트 TTL ≥ 3/12 최대 승인 시한 + 재시도 창 불변식이 CI에서 검사되는가 (불균형 ⑤ 반영)
 - [ ] 메모리 주입 건의 부정 피드백률을 no-memory 대비로 상시 측정하는가
 - [ ] 예산 배분 표·관련도 임계값·항목 상한이 코드 밖 설정으로 버전 관리되는가
+- [ ] `state.checkpoint`·`memory.read/write/compact` 스팬에 `tenant_id`·`state_schema_version`·`agent.memory_ids_injected[]`가 있어 부정 피드백을 메모리 ID 단위로 조인할 수 있는가
+- [ ] 체크포인트 쓰기 오류율(P1)·삭제 전파 지연·compaction 불일치 알림에 런북이 연결되어 있고, 메모리 쓰기 큐 깊이를 대시보드에서 보는가
 
 ## 최신 트렌드 적용 (최근 1년)
 

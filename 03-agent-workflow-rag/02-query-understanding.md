@@ -204,6 +204,31 @@ SLI 후보: 라우팅 정확도(샘플 라벨 대비), 보정 오차(ECE), 라�
 
 가장 자주 바뀌는 것: 라우팅 표(경로·소스 추가, θ)와 동의어 사전 > 변환 프롬프트 > 라우터 모델 > 결정 모델 API 스펙. 코드 밖 설정으로 둘 것: 라우팅 표, θ, 경로별 변환 전략, 동의어 사전, 변환 프롬프트, N 상한. 포트·어댑터 뒤에 둘 외부 의존: 결정 모델 API, 분류기 서빙, 변환 LLM, 형태소 분석기.
 
+### 관측성 — 이 단계에서 무엇을 기록·측정·알림하는가
+
+운영 안정성의 "탐지 신호"가 **실제로 어디서 나오는지**를 설계한다. 기준은 [Part 1/07 관측성 설계 요소](../01-foundations/07-operations-vocabulary.md)와 [Part 5/03](../05-cross-cutting/03-observability-tracing.md). 이 단계는 **판정 속성의 주요 공급원**이다 — 대시보드 ③의 확신도 히스토그램·결정 소스 분포는 대부분 여기서 나온다. 라우터는 오류율 0·p95 정상인 채로 조용히 틀릴 수 있으므로, RED보다 **판정 분포**를 먼저 본다.
+
+| 기록 대상 | 스팬 / 이벤트 (이름, 부모) | 핵심 속성 (버전 키 포함) | 지표 (→ 어느 SLI) | 샘플링 · 보존 · PII |
+|---|---|---|---|---|
+| 규칙 라우팅(입력 가드레일) | `gate.evaluate input_rules` (부모 `invoke_agent`, 판정 앞) | `agent.decision`(pass/block/out_of_scope/no_permission), `agent.rule_ids[]`, `agent.rules_version`, 차단 사유 코드, `agent.pii_masked` | 규칙 차단률(사유별), 게이트 p95, 범위 밖 비율 | 메타 전수, 차단 건은 질의 본문 전수(마스킹), 통과 건은 해시만 |
+| 정규화·형태소 분석 | `routing.normalize` (자식) | `agent.analyzer_version`, `agent.dictionary_version`, `agent.token_count`, 분석기 예외 코드 | 토큰 수 0 비율, 분석기 예외율, 정규화 p95 → 정규화기 오류 | 메타 전수 |
+| 경로·소스 판정 | `routing.decide` (부모 `invoke_agent`) | `agent.decision`(route·source), `agent.confidence`(보정 확률), `agent.decision_source`(rule/classifier/decision_model/llm), `agent.threshold`(θ), `agent.question_def_version`, `agent.model_version`(라우터), `agent.needs_clarification`, `agent.outcome`=fallback + `agent.degradation[]`=`routing_fallback`, 폴백 분기(기본 경로 / 범위밖·사람 연결) | **라우터 p95**·오류율, **폴백 비율**(분기별), **명확화 비율**, 확신도 히스토그램(θ 주변 질량), 결정 소스 분포, **라우팅 정확도**·**보정 오차(ECE)**(샘플 라벨, 비동기 라벨링 트레이스를 원 trace에 링크) → 라우터 다운, 확신도 드리프트 | 메타 전수, 저확신(θ ± 0.05 예시)·폴백·명확화 건은 본문 전수 |
+| 질의 변환 | `routing.transform {rewrite·decompose·hyde·stepback}` (자식) + 모델 호출 자식(`gen_ai.*`) | `agent.prompt_version`(변환 프롬프트), `agent.model_version`, `agent.query_count`(N), `agent.transform_count`, `agent.limit_hit`, `agent.degradation[]`=`rewrite_skipped`, `agent.cached`(재작성 캐시 히트) | 변환 호출 오류율·p95, 변환 횟수 상한 도달률, N 분포, **변환 전후 context recall 상승폭**(골든셋 오프라인 + 운영 샘플) → 변환 LLM 다운, 변환 반복 폭주 | 메타 전수, 변환 결과 본문 opt-in(대화 요약 포함 — PII 마스킹) |
+| 메타데이터 필터 추출 | `routing.extract_filters` (자식) | `agent.filter_keys[]`, `agent.filter_source`(rule/llm), `agent.filter_relaxed`(완화 재검색 여부), 후속 `retrieval.search`의 후보 수를 턴 종료 시 역전파한 `agent.post_filter_candidates` | 필터 적용 후 후보 0 비율, 완화 재검색 비율(ACL 완화는 0건이어야 함) → 메타데이터 추출 오류 | 메타 전수, 필터 값 중 식별자는 해시 |
+| 출력 계약 | 이벤트 `routing.output` (부모 `routing.decide`) | 계약 스키마 버전, 스키마 검증 결과, 출력 필드 존재 여부(`queries, filters, route, source, confidence, needs_clarification`) | 출력 스키마 실패율 | 전수 |
+
+| 알림 | 조건 (예시) | 심각도 | 런북 (첫 3단계) |
+|---|---|---|---|
+| 라우터 폴백 급증 | `routing_fallback` 비율 5분간 20% 초과, 또는 결정 모델·분류기 서킷 열림 | P1 | ① 결정 모델 API·분류기 서빙 상태와 서킷 확인 ② 폴백 분기 분포 확인 — 등급 1 기본 경로 비율 vs 범위밖·사람 연결 비율 ③ 사람 연결로 넘어간 요청의 큐 깊이·대기 시간 확인, 적체 시 접수 제한 |
+| 변환 단계 장애 | 변환 호출 오류율이 10분 지속, 또는 `agent.limit_hit`(변환 횟수) 5% 초과 | P2 | ① 변환 LLM 벤더 상태·서킷 확인 ② `rewrite_skipped` 비율과 멀티턴 골든셋 recall 샘플 확인 ③ 반복 폭주면 변환 프롬프트 최근 버전 확인 후 상한 하향 |
+| 확신도 분포 드리프트 | 명확화 비율이 베이스라인 ±50%, 또는 ECE 샘플 측정값이 기준 초과, 또는 경로 비율 급변 | P2 | ① 확신도 히스토그램에서 θ 주변 질량 이동 확인 ② 라우터 모델·질문 정의·라우팅 표 버전 변경 이력 확인 ③ 보수적 방향(명확화·기본 경로 확대)으로만 θ 임시 조정, 완화는 사람 결정 + 사후 샘플 감사 |
+| 정규화기 오류 | 토큰 수 0 비율 또는 분석기 예외율이 베이스라인 초과(즉시) | P1 | ① 형태소 분석기 서비스 상태·버전 확인 ② [03](03-retrieval-reranking.md) BM25 인덱스 분석기 버전과 일치 여부 확인 ③ 공백 토큰화 + dense 단독 저하가 발동했는지 확인 |
+| 필터 후 후보 0 급증 | 후보 0 비율 10% 초과 | P2 | ① 필터 키 분포에서 특정 키·값이 급증했는지 확인 ② 완화 재검색이 ACL은 건드리지 않았는지 확인(`filter_relaxed` 중 ACL 키 0건) ③ 인덱스 신선도·메타데이터 어휘 변경([Part 2/07](../02-data-pipeline/07-freshness-and-sync.md)) 확인 |
+
+대시보드에서 이 단계를 보는 뷰: ① E2E — 폴백률 중 `routing_fallback` 분해, 명확화 비율 / ② Reasoning 패널 "라우팅" — 라우터 p95, 규칙 차단률(사유별), 변환 횟수·N 분포, 후보 0 비율 / ③ 비용·판정 분포 — **확신도 히스토그램·결정 소스 분포(이 단계가 주 공급원)**, 변환 호출 비용 비중.
+감사 추적으로 넘기는 필드(관측 로그와 분리): 질의 해시, 정규화 결과, 적용 규칙 ID·버전, route·source·확신도·결정 소스, 라우터 모델·질문 정의 버전, 변환 종류·변환 프롬프트 버전, 폴백 분기, 명확화 여부 — 거버넌스 접점 표와 동일. 질의 원문은 관측 로그(opt-in)에만.
+이 단계의 관측이 없으면 못 보는 장애: **조용한 오분류** — 라우터가 죽으면 모두 알지만, 라우터가 틀리면 아무 오류도 없다. 확신도 히스토그램·경로 비율·샘플 라벨 정확도가 없으면 오분류는 몇 단계 뒤 [04](04-generation-grounding.md)의 abstain 급증으로 처음 보이고, 그때는 원인이 라우터인지 검색인지 구분할 수 없다.
+
 ### 거버넌스 접점 — 정책 · 가드레일 · 승인 · 감사
 
 | 항목 | 이 단계에서의 답 |
@@ -222,6 +247,8 @@ SLI 후보: 라우팅 정확도(샘플 라벨 대비), 보정 오차(ECE), 라�
 - [ ] 정규화기·분석기 버전이 [03] 인덱스 분석기와 같은 롤백 단위로 묶여 있는가
 - [ ] 권한·금칙 게이트가 규칙만으로 판정되고 LLM 판정으로 우회할 수 없는가
 - [ ] 트레이스에 라우팅 판정·확신도·규칙 버전·질문 정의 버전이 있어 "그때 왜 그 경로였나"를 재구성할 수 있는가
+- [ ] `routing.decide`에 확신도·θ·결정 소스·질문 정의 버전이 전수 기록되고, 확신도 히스토그램·명확화 비율 이동에 알림과 런북이 연결되어 있는가
+- [ ] `routing_fallback`을 분기(등급 1 기본 경로 / 범위밖·사람 연결)별로 셀 수 있고, 사람 연결 큐 깊이가 함께 보이는가
 
 ## 최신 트렌드 적용 (최근 1년)
 

@@ -206,6 +206,31 @@ SLI 후보: 노드별 검증 실패율, 오탐률(거부 샘플 중 정당 출�
 
 가장 자주 바뀌는 것: **규칙·한도** > 온톨로지 > 스키마 > 모델 > 엔진. 코드 밖 설정으로 둘 것: 규칙 세트, 재생성 상한, 폴백 순서, 타임아웃, `hint` 템플릿, 접지 enum(온톨로지에서 생성). 포트·어댑터 뒤에 둘 외부 의존: 정책 엔진, 온톨로지 추론기, 제약 솔버, 코드 실행 샌드박스, KG 저장소.
 
+### 관측성 — 이 단계에서 무엇을 기록·측정·알림하는가
+
+운영 안정성의 "탐지 신호"가 **실제로 어디서 나오는지**를 설계한다. 기준은 [Part 1/07 관측성 설계 요소](../01-foundations/07-operations-vocabulary.md)와 [Part 5/03](../05-cross-cutting/03-observability-tracing.md). 검증기는 "거부"가 정상 동작이므로 **오류율만 보면 건강해 보인다** — 거부 사유 코드 분포와 거부 샘플의 리뷰 라벨(오탐률)이 이 단계의 핵심 품질 신호다. 검증기 스팬은 `verify.schema / verify.rules / verify.solver` 세 이름으로 층을 구분한다.
+
+| 기록 대상 | 스팬 / 이벤트 (이름, 부모) | 핵심 속성 (버전 키 포함) | 지표 (→ 어느 SLI) | 샘플링 · 보존 · PII |
+|---|---|---|---|---|
+| 검증기 층별 판정 | `verify.schema`(구조·타입·enum) / `verify.rules`(정책·한도·SHACL) / `verify.solver`(제약 솔버·온톨로지 추론기), 부모는 해당 노드의 `invoke_agent {name}` — 툴 인자 게이트면 `tool.invoke` 직전 | `agent.node_id, agent.verify_layer, agent.outcome`(pass / reject / error), `agent.error_codes[]`(`layer, code, path`), `agent.rules_applied[]`(규칙 ID·버전), `agent.rules_version, agent.ontology_version, agent.shacl_version, agent.fail_mode`(closed / open) | 노드·층별 검증 실패율(→ 동명 SLI), 거부 사유 코드 분포, 검증기 오류율·가용성·p95(→ 검증기 가용성·p95), **fail-open 통과 건수**(검증 없이 지나간 응답) | 메타 전수. 거부 건 출력 본문 전수(마스킹) — 오탐 리뷰 재료. 통과 건 본문 opt-in |
+| 오탐 측정 | `eval.sample`(거부 건을 노드·규칙 ID로 층화 샘플링, 부모 `turn`) + 리뷰 라벨 | `agent.review_label`(legit / correct_reject), `agent.rules_version, agent.rule_id` | 오탐률(→ 동명 SLI), **규칙 ID별 오탐 기여도**(어느 규칙이 정당 출력을 막나) | 거부 건 중 샘플(예시: 일 50건 또는 5%), 라벨 결과 전수 보존 |
+| 재생성 루프 | 노드 `invoke_agent` 속성 + 자식 `generation.generate`×N(`gen_ai.*` 토큰) | `agent.regen_count, agent.regen_cap, agent.regen_cap_hit, agent.fallback_path`(default / last_pass / human), `agent.hint_template_version, agent.model_version, agent.prompt_version` | 요청당 재생성 횟수 p95·상한 도달률(→ 동명 SLI), 재생성이 차지하는 토큰·비용 비중, 폴백 경로 분포 | 메타 전수. 상한 도달 건은 전 시도 본문 전수 |
+| 변환기 실행(Text-to-SQL / Cypher) | `tool.invoke query_exec`, 앞에 `verify.schema`(구문·허용 테이블·읽기 전용), 부모 노드 `invoke_agent` | `agent.query_lang, agent.query_hash, agent.schema_version, agent.rows_returned, agent.error_class`(syntax / exec / timeout), `agent.degradation[]=vector_fallback` | 실행 오류율·쿼리 타임아웃률, 벡터 폴백률, "정확한 집계 불가" 표시율 | 쿼리 본문 opt-in(해시). 실패·폴백 건 전수 |
+| 코드 샌드박스 | `tool.invoke code_sandbox` | `agent.sandbox.cpu_ms, agent.sandbox.mem_peak_mb, agent.sandbox.net_attempts, agent.sandbox.fs_attempts, agent.sandbox.killed_reason`(time / mem / policy), `agent.code_hash` | 자원 초과 종료율, **네트워크·파일 시도 건수**(0이어야), 킬 스위치 상태 | 시도·종료 건 전수 + 코드 해시, 보안 이벤트 스트림으로 복제 |
+| 온톨로지 추론·KG 존재 검사 | `verify.solver`(온라인 추론기), `tool.invoke kg_lookup` | `agent.ontology_version, agent.inference_mode`(online / materialized), `agent.degradation[]=inference_skipped, agent.kg_result`(found / unverified) | 추론기 p95·타임아웃률, "미확인" 등급 비율(노드별), 배치 구체화 경과 시간 | 메타 전수 |
+
+| 알림 | 조건 (예시) | 심각도 | 런북 (첫 3단계) |
+|---|---|---|---|
+| 검증 실패율 급등 | 노드별 실패율 > 베이스라인 2배 15분; `rules_version` 변경 후 24시간은 1.5배 | P2 (툴 인자 노드는 P1) | ① 직전 규칙 세트 버전 자동 롤백 발동 여부·보안 규칙 제외 확인 ② 거부 사유 코드 상위 3개와 규칙 ID 식별 ③ 거부 샘플 20건 리뷰 → 오탐이면 규칙 소유자, 정당 거부면 상류 프롬프트 |
+| 검증기 다운 | `verify.*` 오류율 > 5% 1분, 또는 정책 엔진·추론기 헬스 실패 | P1 | ① fail-closed 노드(등급 3 이상)가 실제로 차단 중인지 — 쓰기 경로 호출 수 0 확인 ② 엔진·추론기 인스턴스 상태 ③ fail-open 노드의 "검증 없음 표시"가 붙었는지 `fail_mode=open` 통과 건수로 확인 |
+| 재생성 폭주 | 상한 도달률 > 0.5% 30분, 또는 요청당 `generation.generate` 수 p95 > 3 | P2 | ① 노드·입력 유형별 집중 확인 ② 상한 1로 임시 축소 피처 플래그 ③ `hint` 템플릿·스키마·모델 버전 변경 이력 대조 |
+| 샌드박스 이상 | `net_attempts` 또는 `fs_attempts` 1건 이상; 자원 초과 종료율 > 5% 1시간 | P1 (시도) / P3 (자원) | ① 코드 해시·세션·테넌트 격리 ② 반복 시 코드 실행 툴 킬 스위치 ③ 보안 책임자 통보, 패턴을 규칙 1층에 추가 |
+| 변환기·추론기 지연 | 쿼리 타임아웃률 > 3% 또는 추론기 p95 > 300ms 15분 | P3 | ① 스키마·공리 변경 이력 ② 벡터 폴백·추론 생략 저하가 표시와 함께 동작하는지 확인 ③ 프로파일 재검토 요청 |
+
+- **대시보드에서 이 단계를 보는 뷰**: ② Reasoning 패널 — 노드·층별 검증 실패율, 거부 사유 코드 분포, 검증기 가용성·p95, 재생성 횟수 히스토그램. ③ 비용·판정 분포 — 재생성 토큰 비중, 게이트 출력 분포(통과 / 차단 / 승인 / 미확인 저하), 규칙 ID별 오탐 기여도.
+- **감사 추적으로 넘기는 필드(관측 로그와 분리)**: 노드 ID, 층별 결과(`layer, code, path`), 적용 규칙 ID·규칙 세트 버전, 온톨로지·SHACL 버전, 재생성 횟수, 최종 경로(합격 / 폴백 / 차단 / 승인), 폴백 사유, 변환기 패턴의 실행 쿼리·코드 해시와 실행 결과 요약. 관측 스팬에는 코드·개수·해시만.
+- **이 단계의 관측이 없으면 못 보는 장애**: **오탐 폭증**. 검증기 입장에서는 거부가 성공이라 오류율 0%·지연 정상이다. 거부 건 샘플링과 리뷰 라벨이 없으면 정당한 출력이 대량 거부되는 것을 재생성 비용 상승이나 "처리할 수 없다" 민원으로만 안다. 반대편의 fail-open 통과(검증 없이 나간 응답)도 `fail_mode` 속성이 없으면 흔적이 남지 않는다.
+
 ### 거버넌스 접점 — 정책 · 가드레일 · 승인 · 감사
 
 | 항목 | 이 단계에서의 답 |
@@ -225,6 +250,8 @@ SLI 후보: 노드별 검증 실패율, 오탐률(거부 샘플 중 정당 출�
 - [ ] 규칙 테스트 스위트가 CI에 있고 규칙 변경 시 자동 실행되는가
 - [ ] 온톨로지 변경의 전파 범위(enum·SHACL·결정 enum·UI)를 표로 추적하는가
 - [ ] 감사 레코드에 규칙 세트 버전이 있어 과거 판정을 재현할 수 있는가
+- [ ] 거부 건을 노드·규칙 ID로 층화 샘플링해 리뷰 라벨(정당 / 정당 거부)을 붙이고, 오탐률을 규칙 ID별 기여도로 보는가
+- [ ] `verify.schema/rules/solver` 스팬에 `agent.rules_version`·`agent.fail_mode`가 있어 fail-open으로 통과한 응답을 트레이스에서 식별할 수 있는가
 
 ## 최신 트렌드 적용 (최근 1년)
 

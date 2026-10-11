@@ -196,6 +196,32 @@ SLI 후보: ① 필수 필드 완전성(색인된 청크 중 다섯 축 필수 �
 
 가장 자주 바뀌는 것: **지식**(문서 판·유효 기간), 그 다음 **도메인 모델**(택소노미 값). 둘 다 스키마 변경 없이 **데이터 변경**으로 흡수되어야 한다. 코드 밖 설정으로 둘 것: 필수 필드 목록, 택소노미, 게이트 규칙, 보존 기간표, 복제 필드 목록, PROV 프로파일. 포트·어댑터 뒤에 둘 외부 의존: 메타데이터 저장소, 벡터DB 페이로드 복제, lineage 카탈로그. 시점 재현성은 이 단계가 **제공자**다. 불변 버전 + `pipeline_version` + bitemporal 필드가 있어야 "그때 그 답"을 재구성할 수 있다.
 
+### 관측성 — 이 단계에서 무엇을 기록·측정·알림하는가
+
+운영 안정성 표의 "탐지 신호"가 **실제로 어디서 나오는지**를 설계한다. 기준은 [Part 1/07 관측성 설계 요소](../01-foundations/07-operations-vocabulary.md)와 [Part 5/03](../05-cross-cutting/03-observability-tracing.md). 이 단계는 **버전 키의 제공자**다 — 다른 모든 스팬이 붙이는 `agent.pipeline_version`·`agent.index_version`·파서·임베딩·온톨로지 버전 값이 여기서 기록한 메타데이터에서 나온다. 따라서 이 단계의 관측은 "게이트가 무엇을 막았나"와 "원천 ↔ 복제본 사이의 지연"에 집중한다.
+
+| 기록 대상 | 스팬 / 이벤트 (이름, 부모) | 핵심 속성 (버전 키 포함) | 지표 (→ 어느 SLI) | 샘플링 · 보존 · PII |
+|---|---|---|---|---|
+| 인덱싱 게이트 판정 | `index.meta.gate` (부모: 문서 트레이스 `ingest.fetch`) | `doc_id`, `doc_version`, `tenant_id`, `agent.schema_version`, `agent.taxonomy_version`, `agent.rules_version`(게이트 규칙), `agent.pipeline_version`, `agent.gate_decision`(pass / block / degrade), `agent.gate_reason_codes[]`, `agent.missing_fields[]`, `agent.unclassified_fields[]`, `agent.derived_fields[]`(추정 효력일 등), `agent.outcome` | `index.meta.gate.decisions{decision,reason,source}` 카운터 → "소스별 거부율·거부 사유 분포", `index.meta.gate.throughput` → "게이트 처리량 0", `index.meta.unclassified_ratio{field}` → "미분류 비율", `index.meta.temporal_violations{rule}` → "`valid_from > valid_to` 등 규칙 위반 건수". 필수 필드 완전성(**SLI ①**)은 게이트가 보장하므로 지표는 `index.meta.gate.bypass_writes`(게이트 밖 쓰기, 0이어야 함) + 색인 청크 샘플 검증 | 메타 전수. 메타값은 그룹 ID·택소노미 ID만이라 PII 없음. 차단·저하 건 100% 보존 |
+| 저장소 쓰기 | `index.meta.upsert` (부모 `index.meta.gate`) | `agent.store_version`, `agent.is_current_flip`(새 판 + 이전 판 전환 트랜잭션), `agent.new_values_seen[]`(택소노미 밖 신규 값) | `index.meta.upsert.errors`, `index.meta.store.availability`, `index.meta.upsert.duration_ms` → "저장소 가용성", `index.meta.new_value_events{field}` → "신규 값 출현 로그" | 전수 |
+| 벡터DB 페이로드 복제 | `index.meta.replicate` (변경 큐 소비자, 원 문서 트레이스에 **링크**) | `agent.replica_target`, `agent.replicated_fields_version`(복제 필드 목록 버전), `agent.replication_lag_ms`(원천 커밋 → 복제 완료), `agent.event_type`(upsert / delete / acl), `agent.classification` | `index.meta.replicate.lag_ms{event_type}` 히스토그램 → **SLI ② 복제 지연 p95**, `index.meta.replicate.backlog` 게이지 → "변경 큐 소비 적체" | 전수. delete·acl 이벤트는 끝점 완료 시각까지 100% |
+| 계보(PROV) 기록 | `index.meta.lineage` 이벤트 (부모 `index.meta.upsert`) | `agent.prov_profile_version`, `agent.derived_from_count`, `agent.generator{parser,chunker,embedding,extractor}` 버전 묶음 | `index.meta.lineage.missing_ratio`(파생물 중 `derived_from` 없는 비율, 0 목표) — [10](10-access-control-governance.md) 삭제 범위 산정의 전제 | 전수 |
+| 주기 권한 대조 | `acl.reconcile` 배치 이벤트 ([10](10-access-control-governance.md)과 공유, 부모 없음) | `agent.source_id`, `agent.compared_count`, `agent.mismatch{expose,hide}` 방향별 건수, `agent.acl_mapper_version` | `acl.reconcile.mismatch{direction}` → **SLI ③ 권한 대조 불일치 건수**, 탐지 신호 "주기 권한 대조의 불일치" | 배치 주 1회(예시). 불일치 문서 ID 목록은 감사 저장소로 |
+
+탐지 신호 "렌더 전 재확인 실패"는 [08](08-grounding-data-design.md) `evidence.assemble`의 `agent.exclusion_reasons[]=meta_unavailable` 비율로 읽는다. 질의 시 필터는 Part 3 `retrieval.search`가 측정하되 `agent.schema_version`·`agent.replicated_fields_version`을 이 단계가 제공한다.
+
+이 단계 스팬이 제공하는 버전 키는 다른 단계 알림의 **분해 축**이다 — 01·02·04·05가 자기 지표를 `agent.parser.version`·`agent.chunk_version`·`agent.embedding_model`·`agent.extractor_version`으로 나눌 수 있는 것은 `index.meta.lineage`가 그 값을 문서별로 기록하기 때문이다. 버전 키가 비어 있는 스팬 비율(`agent.pipeline_version` 누락)을 CI·런타임 양쪽에서 0으로 지킨다.
+
+| 알림 | 조건 (예시) | 심각도 | 런북 (첫 3단계) |
+|---|---|---|---|
+| 신규 색인 중단 (장애 모드: 메타데이터 저장소 다운) | `index.meta.gate.throughput`=0이 5분 지속(평소 유입 있음), 또는 `store.availability` < 99%가 5분 | P2 (15분 초과 P1) | ① 저장소 상태·연결 풀 확인 ② 08 `exclusion_reasons=meta_unavailable` 비율로 서빙 측 저하 범위 확인 ③ fail-closed가 유지되는지(`bypass_writes`=0) 확인 후 온콜 |
+| 두 진실 구간 (장애 모드: 복제 지연 급증) | `index.meta.replicate.lag_ms` p95 > 5분이 10분 지속; `{event_type=delete,acl}`이고 `classification`이 기밀이면 15분 초과 즉시 | P2 / P1 (기밀 삭제·ACL) | ① 복제 소비자 backlog·오류 확인 ② 08 렌더 전 재확인이 원천을 읽어 차단 중인지 확인 ③ 기밀 포함이면 해당 컬렉션 검색 일시 차단([10](10-access-control-governance.md)) |
+| 특정 소스 문서 실종 (장애 모드: 게이트 거부 폭증) | `index.meta.gate.decisions{decision=block,source}` 비율이 7일 베이스라인 대비 +5%p 1시간 지속 | P2 | ① `gate_reason_codes` 상위 사유 확인(필수 필드 누락 vs 시점 규칙) ② 01 커넥터 ACL 매퍼·소스 스키마 변경 이력 대조 ③ 격리 큐의 거부 문서 범위 산정, 원인 수정 후 재투입 |
+| 값 품질 저하 (장애 모드: 택소노미 밖 값 유입 · 시점 필드 오설정) | `index.meta.unclassified_ratio{field}` > 2%가 24시간 지속, 또는 `temporal_violations` 일 건수가 베이스라인 3배 | P3 | ① `new_value_events` 상위 값으로 택소노미 변경 요청([06](06-ontology-driven-modeling.md)) 생성 ② `derived_fields` 비율 높은 소스 식별 ③ 소스 소유자에게 메타데이터 보강 요청 |
+| 권한 불일치 (장애 모드: 소스 ACL 복사 오류) | `acl.reconcile.mismatch{direction=expose}` ≥ 1 | P1 | ① 불일치 문서를 보수적(더 좁은) ACL로 즉시 덮어쓰기 ② `acl_mapper_version` 변경 이력·소스 권한 모델 변경 확인 ③ 보안 보고 절차([10](10-access-control-governance.md)) 개시, 재동기화 이벤트 투입 |
+
+대시보드에서 이 단계를 보는 뷰: ② Knowledge 패널 — 게이트 판정 분포(소스 × 사유), 복제 지연 p95(이벤트 유형별), 미분류 비율, 권한 대조 결과 / ③ 비용 패널 — 해당 없음(LLM 호출 없음; 저장량 추이는 용량 패널) / 감사 추적으로 넘기는 필드(관측 로그와 분리): 거버넌스 접점 표의 필드 — 특히 **수동 수정 이력(누가·이전값·이후값·승인자)과 소스 ACL 스냅샷은 감사 저장소에만** 두고 관측 스팬에는 `doc_version`·판정·사유 코드만 / 이 단계의 관측이 없으면 못 보는 장애: **원천에는 삭제·권한 회수가 반영됐지만 복제본에는 아직인 "두 진실" 구간** — 검색은 정상 응답을 내고 오류도 없으며, `replicate.lag_ms{event_type}`를 이벤트 유형별로 재지 않으면 upsert 지연에 묻혀 보이지 않는다.
+
 ### 거버넌스 접점 — 정책 · 가드레일 · 승인 · 감사
 
 | 항목 | 이 단계에서의 답 |
@@ -215,6 +241,8 @@ SLI 후보: ① 필수 필드 완전성(색인된 청크 중 다섯 축 필수 �
 - [ ] 수동 ACL·분류·유효 기간 수정이 승인 게이트와 변경 이력을 거치는가
 - [ ] 계보 쿼리 하나로 "파서 vX로 만든 문서"의 재처리 범위를 산정할 수 있는가
 - [ ] 과거 시점(`valid_from/to`)과 `pipeline_version`으로 그때의 근거를 재구성할 수 있는가
+- [ ] 운영 안정성 표의 탐지 신호마다 원천 스팬·지표(`index.meta.gate.decisions`, `index.meta.replicate.lag_ms{event_type}`, `acl.reconcile.mismatch{direction}` 등)가 있는가
+- [ ] 알림마다 런북이 있고, 복제 지연 알림이 delete·acl 이벤트를 upsert와 분리해 보는가
 
 ## 최신 트렌드 적용 (최근 1년)
 

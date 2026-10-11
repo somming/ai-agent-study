@@ -228,6 +228,32 @@ SLI 후보: ① 소스 변경 → 검색 반영 지연 p95(소스별) ② 삭제
 
 가장 자주 바뀌는 것: **지식**. 이 단계가 잘 설계되면 Part 2의 나머지 단계는 지식 변화를 "증분 재처리"라는 한 단어로 흡수할 수 있다. 두 번째는 **파이프라인 버전**(모델·규칙)이며, 이는 블루/그린이라는 단일 절차로 수렴시킨다. 코드 밖 설정으로 둘 것: 소스별 SLO·감지 방식·대조 주기, 우선 레인 정의, 디바운스 창, 톰스톤 유예·보존 기간표, 중복 임계값·정본 규칙, 재시도 상한, 블루/그린 평가 기준. 포트·어댑터 뒤에 둘 외부 의존: 메시지 브로커, 각 인덱스의 쓰기 API(`apply_change(event)` 포트 뒤에 벡터·BM25·그래프·메타데이터 어댑터), 소스 변경 감지 수단. 시점 재현성: 모든 파생물의 `pipeline_version`과 인덱스 별칭 전환 이력이 "그때 어떤 버전의 인덱스가 서빙했나"를 복원한다.
 
+### 관측성 — 이 단계에서 무엇을 기록·측정·알림하는가
+
+운영 안정성 표의 "탐지 신호"가 **실제로 어디서 나오는지**를 설계한다. 기준은 [Part 1/07 관측성 설계 요소](../01-foundations/07-operations-vocabulary.md)와 [Part 5/03](../05-cross-cutting/03-observability-tracing.md). 이 단계의 관측은 **흐름·적체 지표가 주력**이다(1/07 지표 3종 중 셋째). 변경 이벤트 하나가 여러 소비자(벡터·BM25·그래프·메타데이터, 삭제 레인은 캐시·메모리·골든셋까지)로 퍼지므로, `sync.propagate`는 **소비자별 자식 스팬**으로 갈라지고 원래 문서 트레이스에는 링크로 연결한다. 끝점별로 재지 않으면 "인덱스에선 지웠는데 캐시에 남은" 상태가 보이지 않는다.
+
+| 기록 대상 | 스팬 / 이벤트 (이름, 부모) | 핵심 속성 (버전 키 포함) | 지표 (→ 어느 SLI) | 샘플링 · 보존 · PII |
+|---|---|---|---|---|
+| 변경 감지·이벤트 생성 | `sync.detect` (부모: 01 `ingest.poll` 또는 웹훅·CDC 수신 스팬) | `doc_id`, `event_id`, `agent.event_type`(upsert / delete / acl / expire / retract), `agent.source_id`, `tenant_id`, `agent.detect_method`(hash / mtime / webhook / cdc), `agent.source_changed_at`, `agent.lane`(delete / acl / update / new), `agent.debounced`(bool), `agent.classification`(기밀·PII 여부 — 우선순위) | `sync.queue.inflow{lane}` 카운터 → "큐 유입 0", `sync.queue.depth{lane}` 게이지 → "큐 깊이", `sync.debounce.suppressed` | 전수. 보존 30일 |
+| 소비자별 전파 | `sync.propagate{consumer}` (부모 `sync.detect`, consumer = vector / bm25 / graph / meta / cache / memory / goldenset; 문서 트레이스에 링크) | `agent.consumer`, `agent.pipeline_version`, `agent.index_version`, `agent.queue_wait_ms`, `agent.retry_count`, `agent.outcome`(success / dlq / skipped_idempotent), `agent.dlq_reason` | `sync.queue.consumed{consumer}` → "큐 소비 0", `sync.freshness_ms{source}`(= 완료 시각 − `source_changed_at`, 가장 느린 소비자 기준) → **SLI ① 소스 변경 → 검색 반영 지연 p95**, `sync.propagate.duration_ms{consumer}` → "소비자별 지연 p95", `sync.path_skew_ms`(소비자 간 최대 − 최소) → **SLI ⑤ 경로별 지연 차**, `sync.dlq.size`·`sync.dlq.reasons{reason}` → **SLI ④ DLQ 크기**, "실패 사유 분포" | 전수. DLQ 건 100% |
+| 삭제 레인 | `sync.delete` (부모 `sync.detect`, 끝점별 자식 `sync.delete{target}`) | `agent.tombstone_at`, `agent.delete_reason`(delete / expire / retract / acl_revoke), `agent.propagated_targets[]`(완료 끝점 목록: index / cache / memory / goldenset / trace), `agent.pending_targets[]`, `agent.classification`, `agent.physical_delete`(bool, 유예 후 배치) | `sync.delete.latency_ms{target}` 히스토그램 → **SLI ② 삭제 이벤트 → 끝점별 제거 p95**(캐시는 3/01·3/03, 메모리는 3/08, 골든셋은 3/13·4/10이 각자 재고 여기서 합산), `sync.delete.pending{target}` 게이지 | 전수. 기밀·PII 삭제는 끝점 완료 시각까지 100%, 보존은 삭제 증명과 함께 장기(감사) |
+| 대조 배치·카나리 | `sync.reconcile` 배치 이벤트 (부모 없음, 파티션 단위), `sync.canary` 이벤트 (톰스톤 문서 카나리 질의, 인덱스·캐시 경로 모두) | `agent.partition`, `agent.compared_count`, `agent.ghost_count`, `agent.missing_count`, `agent.reinjected_count`, `agent.canary.expected=0`, `agent.canary.actual`, `agent.canary.path`(index / cache) | `sync.reconcile.ghosts{source}`·`sync.reconcile.missing` → **SLI ③ 대조 후 유령·누락**, `sync.canary.fail{index,path}` → "톰스톤 미적용 인덱스 탐지" | 대조 일 1/7 파티션(예시), 카나리 시간당 1회(예시). 보존 90일 |
+| 블루/그린 전환 | `sync.switch` 이벤트 (부모 없음, 04 `index.eval`에 링크) | `agent.index_version{from,to}`, `agent.pipeline_version{from,to}`, `agent.eval_delta{recall,…}`, `agent.gate_decision`(pass / blocked / approved), `agent.rolled_back`(bool), `agent.grace_until` | `sync.switch.outcome` 카운터, 전환 후 Part 3 `retrieval.*` 무결과율·클릭을 `agent.index_version`으로 분해 → "전환 후 실시간 지표" | 전수. 보존 영구(전환 이력) |
+| 중복 제거 | `sync.dedupe` (부모 `sync.propagate{consumer=meta}`) | `agent.dedupe_method`, `agent.threshold`, `agent.cluster_size`, `agent.canonical_doc_id`, `agent.supersedes_in_cluster`(bool) | `sync.dedupe.supersedes_in_cluster` 카운터 → "정본 묶음에 `supersedes` 관계 포함 건수" | 전수 |
+
+샘플링·보존: 이벤트 메타는 전수, 문서 본문은 이 단계에 없다. 삭제 레인은 끝점 완료 시각까지 100% 보존하고 삭제 증명과 함께 감사 저장소로 복사한다. 테일 샘플링 대상(DLQ·카나리 실패·전환 차단)은 원 문서 트레이스까지 링크로 묶어 보존 기간을 연장한다.
+
+| 알림 | 조건 (예시) | 심각도 | 런북 (첫 3단계) |
+|---|---|---|---|
+| 신선도 조용히 악화 (장애 모드: 변경 큐·브로커 다운) | `sync.queue.consumed{*}`=0이 가장 짧은 소스 SLO의 3배(15분) 지속이면서 `sync.freshness_ms` 상승 | P1 | ① 브로커 상태·소비자 연결 확인 ② 01 커넥터 커서가 보존 중인지(유실 없음) 확인 ③ 복구 후 대조 배치로 누락분 보충 예약 |
+| 삭제 전파 지연 (장애 모드: 재처리 잡 지연 급증 — 삭제·ACL 레인) | `sync.delete.latency_ms{target}` p95 > 15분(어느 끝점이든), 또는 `classification`이 기밀·PII인 삭제의 `pending_targets[]` 비어 있지 않음이 1분 초과 | P1 | ① `pending_targets[]`로 어느 끝점(인덱스 / 캐시 / 메모리 / 골든셋)이 막혔는지 식별 ② 우선 레인이 신규 색인보다 먼저 처리 중인지 `queue.depth{lane}` 확인 ③ 막힌 끝점 소비자 재시작, 기밀이면 해당 컬렉션 검색 일시 차단([10](10-access-control-governance.md)) |
+| 특정 소스 갱신 중단 (장애 모드: 재처리 실패 폭증 → DLQ) | `sync.dlq.size` > 100, 또는 단일 `dlq_reason` > 50% | P2 | ① 상위 사유로 상류 장애(01 파서·04 임베딩 API·05 추출) 식별 ② 상류 복구 확인 후 DLQ 재투입(멱등) ③ 체류 48h 초과 건은 소유자에게 보고 |
+| 유령 문서 (장애 모드: 삭제 미전파) | `sync.reconcile.ghosts` ≥ 1, 또는 `sync.canary.fail` ≥ 1(경로 불문) | P1 (기밀·PII·철회) / P2 | ① 카나리 실패 인덱스·경로의 검색 즉시 차단 ② 톰스톤 이벤트 재투입, `propagated_targets[]` 완료 확인 ③ 원인(소비자 누락 vs 감지 방식 한계) 분류 후 01 감지 방식 승격 검토 |
+| 전환 회귀 (장애 모드: 블루/그린 전환 후 회귀) | 전환 후 30분 윈도의 무결과율(`index_version=new`)이 구 버전 대비 +2%p, 또는 전환 게이트 `blocked` | P2 | ① 별칭을 블루로 즉시 롤백(`sync.switch.rolled_back=true`) ② 04 `index.eval` 결과와 실시간 지표 차이 원인(평가셋 커버리지) 확인 ③ 유예 기간 내 재전환 여부 결정 |
+| 데이터 정합성 (장애 모드: 경로 불일치 · 중복 제거 오탐) | `sync.path_skew_ms` > 1시간 지속, 또는 `sync.dedupe.supersedes_in_cluster` ≥ 1 | P3 | ① 느린 소비자 식별(대개 graph) 후 워커 조정 ② 불일치 문서 큐 재투입 ③ 오탐 묶음은 `supersedes` 제외 규칙 적용·임계값 보수화 |
+
+대시보드에서 이 단계를 보는 뷰: ② Knowledge 패널 — 소스별 신선도 p95(SLO 선 포함), **끝점별 삭제 전파 p95**, 레인별 큐 깊이, DLQ 크기·사유, 경로 skew, 대조·카나리 결과, 전환 이력 타임라인 / ③ 비용 패널 — 전체 재색인(블루/그린) 1회 비용(이벤트 수 × 문서당 재처리 비용 — 04·05 비용을 `pipeline_version` 전환 시점으로 합산) / 감사 추적으로 넘기는 필드(관측 로그와 분리): 거버넌스 접점 표의 이벤트 ID·유형·수신·소비자별 완료 시각, 톰스톤 시각·사유, 물리 삭제 대상 목록·승인자, 전환 이력(번들 버전·평가 결과·승인자·롤백), 대조 결과 — 삭제 증명과 전환 승인자는 감사 저장소에만, 관측 스팬엔 `event_id`·결과 코드·끝점 목록 / 이 단계의 관측이 없으면 못 보는 장애: **톰스톤이 인덱스에는 적용됐지만 캐시·메모리·골든셋 끝점에서 빠진 상태** — 인덱스 기준 삭제 전파 SLI는 100%로 보이는데 삭제된 문서가 캐시된 답변으로 계속 나간다. `sync.delete.latency_ms{target}`와 `pending_targets[]`를 끝점별로 두지 않으면 보이지 않는다.
+
 ### 거버넌스 접점 — 정책 · 가드레일 · 승인 · 감사
 
 | 항목 | 이 단계에서의 답 |
@@ -248,6 +274,8 @@ SLI 후보: ① 소스 변경 → 검색 반영 지연 p95(소스별) ② 삭제
 - [ ] 블루/그린 전환 게이트(평가셋)·별칭 롤백·유예 보관이 리허설되었는가
 - [ ] 물리 삭제가 정책 배치(등급 4, 유예 후) / 요청·일괄(등급 5, 2인 승인 + 사람 실행)로 구분되어 있고, 삭제 증명이 남는가(불균형 ⑧ 반영)
 - [ ] 삭제 레인 소비자에 Reasoning 결과·시맨틱 캐시, 메모리, 골든셋이 등록되어 있고 끝점별 제거 p95가 측정되는가(불균형 ① 반영)
+- [ ] 운영 안정성 표의 탐지 신호마다 원천 스팬·지표(`sync.queue.consumed`, `sync.delete.latency_ms{target}`, `sync.dlq.size`, `sync.path_skew_ms`, `sync.reconcile.ghosts`, `sync.canary.fail{path}`, `sync.switch` 후 `index_version` 분해)가 있는가
+- [ ] 알림마다 런북이 있고, 삭제 전파 알림이 끝점별(인덱스·캐시·메모리·골든셋)로 울리며 기밀·PII는 즉시 P1인가
 
 ## 최신 트렌드 적용 (최근 1년)
 

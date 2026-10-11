@@ -211,6 +211,32 @@ SLI 후보: ① 범위 질문 통과율(릴리스마다) ② 미분류 버킷 �
 
 가장 자주 바뀌는 것: **도메인 모델**(개념 추가·개명). 설계 원칙은 ① 소비자가 라벨이 아닌 **정의 ID를 참조**해 개명이 전파되지 않게, ② 조직·제품군처럼 자주 바뀌는 것은 클래스가 아니라 **인스턴스·택소노미**로 두어 릴리스 없이 데이터로 흡수. 코드 밖 설정으로 둘 것: 온톨로지 정의 파일(YAML/JSON-LD/OWL), SHACL shapes, 매핑 테이블, SKOS 택소노미, 범위 질문 세트, 모듈별 클래스 상한. 포트·어댑터 뒤에 둘 외부 의존: OWL 편집기·트리플스토어·추론기, 변환 도구 체인, 외부 표준 온톨로지 배포본. 시점 재현성: 모든 트리플·메타데이터에 온톨로지 버전이 있고([03](03-metadata-provenance.md)), 과거 버전 정의 파일과 매핑 테이블이 보존되어야 한다.
 
+### 관측성 — 이 단계에서 무엇을 기록·측정·알림하는가
+
+운영 안정성 표의 "탐지 신호"가 **실제로 어디서 나오는지**를 설계한다. 기준은 [Part 1/07 관측성 설계 요소](../01-foundations/07-operations-vocabulary.md)와 [Part 5/03](../05-cross-cutting/03-observability-tracing.md). 온톨로지는 런타임 서비스가 아니므로 이 단계의 트레이스는 **릴리스 단위**(`ontology.release` 루트)이고, 운영 중 신호는 소비자 스팬([05](05-knowledge-graph-construction.md) `kg.validate`, [03](03-metadata-provenance.md) `index.meta.gate`, [09](09-ai-inside-the-pipeline.md) `pipeline.decide`)에 붙은 **`agent.ontology_version` 속성으로 분해**해서 읽는다. 즉 이 단계가 관측에 기여하는 핵심은 "버전 키를 제공하고, 릴리스 전후를 비교 가능하게 만드는 것"이다.
+
+| 기록 대상 | 스팬 / 이벤트 (이름, 부모) | 핵심 속성 (버전 키 포함) | 지표 (→ 어느 SLI) | 샘플링 · 보존 · PII |
+|---|---|---|---|---|
+| 릴리스 파이프라인 | `ontology.release` (릴리스 트레이스 루트), 자식 이벤트 `ontology.transform` · `ontology.test.scope` · `ontology.test.consistency` · `ontology.migrate` · `ontology.rollback` | `agent.ontology_version{from,to}`, `agent.release_type`(minor / major), `agent.mapping_table_version`, `agent.shacl_version`, `agent.transform_output_hash`, `agent.scope_questions{total,passed,failed_ids[]}`, `agent.mapping_completeness`, `agent.approver_role`(ID는 감사만), `agent.outcome`(success / blocked / rolled_back) | `ontology.release.outcome` 카운터, `ontology.transform.failures` → "CI 변환 단계 실패", `ontology.test.scope_pass_ratio` → **SLI ① 범위 질문 통과율**, "릴리스 테스트에서 범위 질문 실패" | 릴리스마다 전수. 보존 영구(릴리스 이력) |
+| 정의 ↔ 운영 드리프트 검사 | `ontology.drift_check` 주기 배치 이벤트 (부모 없음) | `agent.ontology_version`(기준), `agent.consumer`(lpg / extract_labels / ui_labels / enum / taxonomy), `agent.drift_count`, `agent.unmapped_labels[]`(라벨 문자열은 해시, 수만 전수) | `ontology.drift.count{consumer}` → **SLI ③ 정의↔운영 불일치 건수**, `ontology.lpg.undefined_label_events` → "운영 LPG에 정의 없는 라벨 출현" | CI마다 + 일 1회(예시). 보존 90일 |
+| 소비자 측 릴리스 효과 | 05 `kg.validate`·03 `index.meta.gate`·09 `pipeline.decide`의 기존 스팬 (이 단계 소유 아님) | 세 스팬 모두 `agent.ontology_version`(09는 enum 버전으로 매핑)을 가져야 함. 추가로 `agent.unmapped`(bool) | 05 `kg.validate.violation_ratio`를 `agent.ontology_version`으로 분해 → **SLI ④ 추출 위반율**(릴리스 전후 윈도 비교 = 카나리), 03 `index.meta.unclassified_ratio`·05 버킷 유입을 합쳐 `ontology.bucket.ratio` → **SLI ② 미분류 버킷 비율** | 소비자 정책을 따름 |
+| 변경 요청·승인 | `ontology.change_request.open` → `ontology.change_request.resolve` 이벤트 쌍 (1/07 `approval.request → resolve` 패턴) | `agent.request_id`, `agent.class_group`, `agent.owner_assigned`(bool), `agent.origin`(bucket_promoted / manual / drift_auto), `agent.resolution`(approved / rejected / timeout_rejected), `agent.wait_hours` | `ontology.change_request.open` 게이지(적체), `ontology.change_request.wait_hours` 히스토그램 → "승인 대기 시간", `owner_assigned=false` 비율 → "소유자 부재" | 전수. 요청 본문은 변경 관리 시스템에, 스팬엔 ID |
+| 사용률 점검 | `ontology.usage` 분기 배치 이벤트 | `agent.class_id`, `agent.instance_count`, `agent.query_hits`(Part 3 필터·그래프 질의에서 집계), `agent.last_used_at` | `ontology.class.usage{class}` → 과설계 회귀 방지(폐기 후보) — SLI 아님, 거버넌스 입력 | 분기 1회. 보존 영구 |
+
+릴리스 전후 비교(카나리) 규칙: 전환 시각을 기준으로 소비자 지표를 "이전 7일 vs 이후 24시간" 두 윈도로 나눠 같은 패널에 겹쳐 그린다. 분해 축이 `agent.ontology_version` 하나뿐이면 추출 모델·프롬프트 동시 변경을 구분 못 하므로, 릴리스 번들 정책상 온톨로지 메이저 릴리스 창에는 [05](05-knowledge-graph-construction.md)의 추출기·프롬프트 변경을 **동결**한다.
+
+샘플링·보존: 릴리스·변경 요청·드리프트 이벤트는 양이 적어 전수·장기 보존. 라벨 문자열은 해시만 남긴다(도메인 용어 자체가 기밀일 수 있음).
+
+| 알림 | 조건 (예시) | 심각도 | 런북 (첫 3단계) |
+|---|---|---|---|
+| 릴리스 차단 (장애 모드: 변환 실패 · 범위 질문 회귀) | `ontology.release.outcome=blocked` — `transform.failures` ≥ 1 또는 `scope_pass_ratio` < 100% | P3 (릴리스 담당, 소비자 무영향) | ① `failed_ids[]`로 실패 질문이 의도된 폐기인지 정의 오류(순환·레인지)인지 구분 ② 변환 도구 체인 버전 고정 여부 확인 ③ 정의 수정 또는 질문 세트 갱신 후 재릴리스 |
+| 릴리스 후 위반 급등 (장애 모드: 릴리스 후 추출 위반율 급등) | 전환 후 24시간 윈도의 05 `kg.validate.violation_ratio{ontology_version=new}`가 이전 7일 대비 +5%p | P2 | ① 위반 코드가 특정 클래스 정의에 집중되는지 확인 ② `agent.extractor_version`·`prompt_version`이 동시에 바뀌지 않았는지 확인(원인 귀속) ③ 온톨로지만 원인이면 매핑 테이블 역방향 롤백(`ontology.rollback`) |
+| 운영 계층 직접 변경 (장애 모드: 정의 ↔ 운영 드리프트) | `ontology.lpg.undefined_label_events` ≥ 1, 또는 CI `drift.count` > 0 | P2 | ① 미정의 라벨의 쓰기 주체·시각 확인(권한 분리 위반 의심) ② `unmapped` 표시로 소비자 저하 중인지 확인 ③ 변경 요청 자동 생성 확인, 릴리스 차단 유지 |
+| 승인 적체 (장애 모드: 소유자 부재·승인 지연) | `ontology.change_request.wait_hours` > 336h(2주), 또는 `owner_assigned=false` 요청 ≥ 1 | P3 | ① 해당 클래스군의 A 지정 여부 확인 ② 대리 승인자 에스컬레이션 ③ 타임아웃 = 거부 기본값이 작동했는지와 요청 보존 확인 |
+| 버킷 누적 (장애 모드: 미분류 버킷 누적) | `ontology.bucket.ratio` > 2%가 7일 지속 | P3 | ① 버킷 상위 빈도 항목이 변경 요청으로 자동 승격됐는지 확인 ② 특정 소스·문서 유형 집중 여부 확인 ③ 다음 마이너 릴리스에 포함 또는 택소노미(SKOS)로 흡수 결정 |
+
+대시보드에서 이 단계를 보는 뷰: ② Knowledge 패널 — 05 위반율·03 미분류 비율을 **온톨로지 버전별로 분해한 릴리스 전후 비교**, 드리프트 건수, 변경 요청 적체·대기 시간 / ③ 비용 패널 — 직접 비용 없음; 릴리스에 따른 재추출 비용은 05 추출 비용을 `ontology_version` 전환 시점으로 표시 / 감사 추적으로 넘기는 필드(관측 로그와 분리): 거버넌스 접점 표의 온톨로지 버전·변경 로그("왜")·승인자·범위 질문 결과·변환 산출물 해시·매핑 테이블 버전·마이그레이션 ID·롤백 이력 — 승인자 ID와 변경 사유 본문은 감사 저장소에만, 관측 스팬엔 역할·결과 코드 / 이 단계의 관측이 없으면 못 보는 장애: **릴리스 직후 위반율 상승의 원인이 온톨로지인지 추출 모델인지 구분하지 못하는 것** — 소비자 스팬에 `agent.ontology_version`과 `agent.extractor_version`이 함께 없으면 롤백 대상을 고를 수 없어 둘 다 되돌리거나 둘 다 못 되돌린다.
+
 ### 거버넌스 접점 — 정책 · 가드레일 · 승인 · 감사
 
 | 항목 | 이 단계에서의 답 |
@@ -230,6 +256,8 @@ SLI 후보: ① 범위 질문 통과율(릴리스마다) ② 미분류 버킷 �
 - [ ] 클래스군별 도메인 소유자(A)가 지정되고 승인 타임아웃 기본값이 거부인가
 - [ ] 미분류 버킷이 변경 요청으로 자동 승격되고 분기별 사용률 점검이 있는가
 - [ ] 과거 온톨로지 버전 정의·매핑 테이블이 보존되어 시점 재현이 가능한가
+- [ ] 소비자 스팬(05 `kg.validate`, 03 `index.meta.gate`, 09 `pipeline.decide`)이 전부 `agent.ontology_version`을 갖고, 릴리스 전후 위반율·미분류 비율을 버전별로 비교할 수 있는가
+- [ ] 알림마다 런북이 있고, 릴리스 후 위반 급등 알림이 추출기·프롬프트 버전 동시 변경 여부를 먼저 확인하게 되어 있는가
 
 ## 최신 트렌드 적용 (최근 1년)
 

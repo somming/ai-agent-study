@@ -363,6 +363,32 @@ SLI 후보: 승인 응답 시간 p50/p95 — 공통 정의는 **"승인 요청 �
 
 가장 자주 바뀌는 것: **규칙·한도·금칙어** > 승인자 조직 > 우회 패턴 > 분류기 모델 > 프로토콜. 코드 밖 설정으로 둘 것: 규칙 세트, 승인 매트릭스, 역할 매핑, θ, 타임아웃·에스컬레이션 시한, 패턴 사전, 배치 승인 조건. 포트·어댑터 뒤에 둘 외부 의존: 정책 엔진, 분류기·결정 모델, 승인 이벤트 전송 계층(AG-UI·SSE), 조직 디렉터리.
 
+### 관측성 — 이 단계에서 무엇을 기록·측정·알림하는가
+
+운영 안정성의 "탐지 신호"가 **실제로 어디서 나오는지**를 설계한다. 기준은 [Part 1/07 관측성 설계 요소](../01-foundations/07-operations-vocabulary.md)와 [Part 5/03](../05-cross-cutting/03-observability-tracing.md). 이 단계는 관측 스팬과 감사 레코드가 **같은 지점에서 갈라지는** 자리다 — 경계는 단순하다. **관측 스팬에는 식별자·판정 코드·버전·해시·지연만**, **사람이 본 것과 사람이 한 것의 내용**(승인 카드, 인자 원문, 코멘트, 수정 인자, 사유 원문)은 감사 레코드로만 간다. 둘은 `trace_id, approval_id, record_id`로 조인한다.
+
+| 기록 대상 | 스팬 / 이벤트 (이름, 부모) | 핵심 속성 (버전 키 포함) | 지표 (→ 어느 SLI) | 샘플링 · 보존 · PII |
+|---|---|---|---|---|
+| 게이트 판정(입력·출력·행동) | `gate.evaluate {gate}`, 부모 `invoke_agent {name}`; 행동 게이트는 `tool.invoke {tool}` 직전 | `agent.gate_name, agent.gate_point`(input / output / action), `agent.gate_output`(pass / block / approval_required / degrade), `agent.degrade_mode`(isolation / read_only / unverified_flag), `agent.gate_layer`(rule / classifier / decision_model / judge — 어느 층이 결정했나), `agent.rules_applied[]`(규칙 ID·버전), `agent.rules_version, agent.confidence, agent.fail_mode`, `agent.effect_grade` | **게이트 출력 4종 분포**(게이트·등급·테넌트별), 차단률·저하율, 층별 p95·타임아웃률(→ 정책 엔진 p95), 엔진 오류율(→ 가용성), 2차 수단 생략률(타임아웃으로 규칙만 판정) | 메타 전수. 차단·승인·저하 건 입력·출력 마스킹본 전수. 통과 건 본문 1~5% |
+| 승인 요청·해소 | 이벤트 쌍 `approval.request` → `approval.resolve`(`approval_id`), 중간 `approval.escalate`; 부모는 요청 턴의 `gate.evaluate`, resolve는 다음 턴에서 같은 `approval_id`로 연결 | `approval_id, agent.matrix_row_id, agent.matrix_version, agent.approver_role, agent.approver_id_hash, agent.approval_outcome`(approve / reject / edit / expired), `agent.escalation_step, agent.sync`(동기 / 비동기), `agent.queue_depth_at_request` | 승인 응답 시간 p50/p95(요청 생성 → 결정 수신, → 공통 SLI; UI "카드 표시 → 결정"은 하위 SLI), **승인 큐 깊이 게이지**, **만료율**, 승인·거부·수정률, **승인자당 일일 건수**(피로), 에스컬레이션 최종 단계 도달률, request 대비 resolve+expired 비율(유실률) | 전수. 카드 내용·코멘트는 스팬에 넣지 않음 |
+| 승인자 가용성 | 배치 `approval.roster_check`(일 1회 + 매트릭스 변경 시) | `agent.matrix_row_id, agent.matrix_version, agent.active_approvers` | 역할별 활성 승인자 수(0이면 알림), 매트릭스 커버리지(사람 없는 행 수) | 전수 |
+| 승인 후 실행 | `tool.invoke`에 `approval_id` 전파, 실행 직전 `verify.schema`(승인된 인자 해시 재검증) | `approval_id, agent.args_hash_match, agent.resumed_from_checkpoint_id`([08](08-state-memory-context.md) TTL 불변식) | 승인 → 실행 성공률, 인자 불일치 거부 건수, **승인 후 되돌림률**(품질 — 승인이 형식화되는 신호), 승인 후 체크포인트 재개 실패 수 | 전수 |
+| 오탐·미탐·재심 | `eval.sample` — 차단 건 층화 샘플(오탐), 통과 건 사후 샘플(미탐); 오프라인 `eval.run redteam`(규칙·분류기 변경마다); 재심은 `approval.request review`로 같은 이벤트 쌍 재사용 | `agent.review_label, agent.rules_version, agent.redteam_set_version, agent.review_outcome`(allow_once / rule_candidate / rejected) | 오탐률(→ 동명 SLI), 미탐률(사후 샘플), 레드팀 통과율, 재심 요청률·재심 결과 분포 | 샘플 + 재심 건 전수 |
+| break-glass·일회 허용 | 이벤트 `gate.override`, 부모 `gate.evaluate`; `agent.override_type`(break_glass / review_allow_once) | `agent.override_actor_role, agent.override_reason_code, approval_id?`, 사유 원문은 감사로 | override 건수(기본 0), 역할·사용자 해시별 집중도 | 전수, 발생 즉시 감사 레코드 생성 |
+| 규칙 버전 효과 | 지표 차원으로 `agent.rules_version` 전환 전후 24시간 비교(별도 스팬 없음) | — | 버전별 차단률·오탐률 델타(배포 직후 민감도 상향 창) | — |
+
+| 알림 | 조건 (예시) | 심각도 | 런북 (첫 3단계) |
+|---|---|---|---|
+| break-glass 사용 | `gate.override{break_glass}` 1건 | **P1** | ① 감사 레코드에서 행위자·행동·인자 해시·사유 확인 ② 해당 세션 후속 행동 격리(전송·파괴적 툴 비활성) ③ 보안 책임자·운영 책임자에게 사후 감사 티켓 자동 생성 확인 |
+| 승인 적체·부재 | 큐 깊이 > 승인자당 20건, 또는 대기 p95 > SLO(동기 2분 / 비동기 4시간) 15분, 또는 만료율 > 5% 1일, 또는 역할별 활성 승인자 0 | P2 (등급 4~5 행동 적체는 P1) | ① 역할별 큐 깊이·활성 승인자 수·에스컬레이션 최종 단계 도달률 확인 ② 백프레셔("지연, 나중에 재시도") 발동 확인 ③ 운영 책임자에게 임시 승인자 투입 요청 — 자동 가능 범위 확대는 사람 결정 + 사후 샘플 감사 |
+| 정책 엔진 다운 | `gate.evaluate` 오류율 > 5% 1분, 또는 헬스 실패 | P1 | ① fail-closed 동작 확인 — 행동 게이트 차단 100%, 읽기 전용 경로만 흐르는지 ② 입력·출력 1층 규칙의 코드 내 폴백 사본이 판정 중인지(`gate_layer=rule`, 엔진 외부) ③ 차단된 요청 목록 보관, 복구 후 재처리 판단 |
+| 차단율 급등 | 게이트별 차단률 > 베이스라인 2배 15분; `rules_version` 변경 후 24시간은 1.5배 | P2 | ① 규칙 세트 직전 버전 자동 롤백 발동(보안·권한·한도 제외) 확인 ② 차단 샘플 20건 리뷰 → 오탐이면 규칙 소유자 ③ 재심 큐 증가·"미확인" 저하 전환 여부 확인 |
+| 승인 이벤트 유실 | request 대비 resolve+expired 비율 < 98% 1시간, 또는 승인 후 체크포인트 재개 실패 > 1% | P2 | ① 전송 계층(AG-UI·SSE) 오류율 ② 만료 전 미응답 건 UI 재알림 발동 확인 ③ 체크포인트 TTL ≥ 최대 승인 시한 + 재시도 창 불변식 확인 |
+
+- **대시보드에서 이 단계를 보는 뷰**: ③ 비용·판정 분포 — **게이트 출력 4종 분포**(게이트별 스택, 등급별), 결정 소스·`gate_layer` 분포, **승인 대기 큐 깊이·p95·만료율**, 승인자당 일일 건수, override 건수. ① 사용자 관점 E2E — 승인 대기 시간, 사람 개입률. ② Action 패널 — 게이트 RED, 정책 엔진 가용성·p95, 2차 수단 생략률.
+- **감사 추적으로 넘기는 필드(관측 로그와 분리)**: "감사 레코드 스키마 예시"의 전체 — 요청자 `user_id`, 인자 원문·마스킹본, `rules_applied[].matched_condition`, 확률 분포 전체, 게이트 출력, **승인 카드에 보여준 내용**(`card_shown`), 승인자 `user_id`·코멘트·수정 인자, 재심 결정·사유, override 사유 원문, 실행 결과. 관측 스팬에 남는 것은 `gate_output, rules_applied[]`(ID·버전), `approval_id, approver_role, approver_id_hash, args_hash`, 지연뿐이다. 저장소·보존·접근 권한·샘플링(감사는 없음)이 다르다.
+- **이 단계의 관측이 없으면 못 보는 장애**: **승인 피로로 "다 승인"되는 것**. 승인률 100%, 응답 시간 짧음, 만료 0 — RED로는 가장 건강해 보이는 상태다. 승인자당 일일 건수, 승인 후 되돌림률, 통과 건 미탐 샘플이 없으면 승인이 형식화된 것을 사고 뒤에야 안다. break-glass도 마찬가지로 전용 이벤트가 없으면 "성공한 실행"으로만 남는다.
+
 ### 거버넌스 접점 — 정책 · 가드레일 · 승인 · 감사
 
 | 항목 | 이 단계에서의 답 |
@@ -383,6 +409,8 @@ SLI 후보: 승인 응답 시간 p50/p95 — 공통 정의는 **"승인 요청 �
 - [ ] 감사 레코드에 규칙 버전·승인 카드 내용이 있고, 관측 로그와 저장소·보존이 분리되어 있는가
 - [ ] break-glass 경로가 있고 사용 시 사후 감사가 자동으로 생성되는가
 - [ ] 반복 승인을 규칙으로 승격하는 절차와 주기가 정해져 있는가
+- [ ] 게이트 출력 4종 분포·승인 큐 깊이·대기 p95·만료율·승인자당 일일 건수가 한 화면(대시보드 ③)에 있고, 승인 카드 내용·인자 원문은 관측 스팬이 아니라 감사 레코드에만 있는가
+- [ ] break-glass·일회 허용이 `gate.override` 이벤트로 P1 알림과 감사 레코드 자동 생성으로 이어지는가
 
 ## 최신 트렌드 적용 (최근 1년)
 

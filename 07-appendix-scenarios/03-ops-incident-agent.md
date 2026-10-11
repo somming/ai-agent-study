@@ -324,7 +324,49 @@ break-glass는 **쓰이지 않는 것이 정상**이다. 분기당 사용 건수
 
 관측 트레이스에는 지연·토큰·스텝 수를, 감사 레코드에는 위 블록만 둔다. 섀도 결정 모델 판정은 관측에만 남기되, **폴백 여부(`fallback`)는 감사에 반드시** 남긴다.
 
-### 9.5 운영 준비도 리뷰(ORR) 통과 조건
+### 9.5 관측 설계 — 한 요청을 끝까지 따라가는 트레이스
+
+4절의 흐름 ①~⑬을 스팬 트리로 옮긴다. 규약은 [Part 1/07 관측성 설계 요소](../01-foundations/07-operations-vocabulary.md)와 [Part 5/03](../05-cross-cutting/03-observability-tracing.md), 심각도는 1/07의 P1/P2/P3. 이 시나리오의 트레이스는 하나의 질문에 답해야 한다 — **"실행된 변경마다 판정 → 게이트 → 승인 → 재허가 → 실행의 체인이 빠짐없이, 올바른 순서로, 같은 `trace_id` 안에 있는가."** 체인의 고리 네 개(`gate.evaluate`의 `rules_applied[]`, `approval.request/resolve`의 `approval_id`·`as_shown_hash`, 실행 직전 `gate.evaluate {pre_exec_recheck}`, `tool.invoke`의 `idempotency_key`)가 모두 있어야 "실행됨"이고, 하나라도 빠진 채 변경 등급 `tool.invoke`가 있으면 그것이 9.1 ③ "승인 없는 변경"의 탐지 원천이다. 알림 트레이스(①②)와 온콜 요청 트레이스(③~)는 `incident_id`로 링크하고, Supervisor와 서브에이전트 3개는 각각 `invoke_agent` 스팬이며 MCP 경계는 W3C 헤더로 전파한다(끊기면 그 구간의 변경 실행은 금지 — 9.1 ⑦). 모든 스팬에 버전 키 5종 + `agent.policy_set_version`·`agent.approval_matrix_version`·`agent.tool_catalog_version`·에이전트별 프롬프트 버전 4종, `env`(prod / stg), `tenant_id`가 붙고 요청자·승인자는 역할과 ID 해시만 남는다.
+
+| 구간 (레이어 → 단계) | 스팬 이름 | 반드시 남길 속성 | 이 시나리오 전용 지표 | 알림 → 런북 |
+|---|---|---|---|---|
+| ①② Knowledge → Reasoning · 알림 수신·심각도·중복 판정 | `turn {alert}` (루트) → `ingest.alert`, `routing.decide {severity}`, `routing.decide {duplicate}` → 각각 자식 `routing.shadow` | `alert_id`·`incident_id`, 환경·서비스·팀 택소노미 태그, PII 마스킹 적용 여부, `agent.decision`(P1~P4 / dup·new), `agent.confidence`, `agent.decision_source`(rule / classifier), 질문 정의 버전, `fallback`(결정 모델 다운 시 규칙 상향), 섀도 일치 | 심각도 정확도·ECE(사후 라벨), **과소 판정 건수**(9.1 ①), 중복 판정 정확도, 택소노미 태그 누락률, 마스킹 누락 건수(0), 폴백율 | 과소 판정 1건 → 9.1 ① 런북(규칙 임계 상향·분류기 롤백) **P1** / 폴백율 5분간 20% → 9.2 ① 런북 P2 |
+| ③ Interaction → Reasoning · 온콜 요청 | `turn {operator}` (루트, `incident_id`로 ① 트레이스에 링크) → `invoke_agent {supervisor}`, 프론트 `ui.stream` | 요청자 역할·팀·`env_scope`, 체크포인트 ID, 버전 키 전부(위 서문), 상태 머신 상태 | 인시던트당 턴 수, 요청 → 첫 진행 패치 지연 | — (E2E는 ⑤에서) |
+| ④⑤ Reasoning → Knowledge · 진단 루프 | `invoke_agent {diagnose}` (부모: supervisor, 위임 판정 `routing.decide {delegate}`) → 루프마다 `tool.invoke {log_query \| metric_query}`(변환기, MCP CLIENT, 헤더 전파), `retrieval.search {runbook \| incident}` → `retrieval.rerank` | 스텝 수·경과 시간(상한 8·시간 상한), 재계획 횟수, 변환기 쿼리 해시·오류 코드, `agent.mcp_server`, 툴 등급(read), 결과 참조 ID(외부화 — 본문 아님), `agent.evidence_ids[]` 타입별(`log_record{ref_id, ts}`, `metric_window{query_hash}`, `runbook_step{runbook_id, version, step_no}`, `incident{ticket_id}`), 환경·팀 사전 필터 통과 여부, 체크포인트 ID | 알림 → 진단 보고서 p95(9.1 ⑤), **스텝·시간 상한 초과율**, 변환기 쿼리 오류율, 로그 인프라 쿼리 p95, 런북 단계 recall, **구판 `runbook_step` 인용 건수(0)**(9.1 ⑥), **MCP 경계 전파 끊김률**(9.1 ⑦), 권한 밖 조회 건수(0) | 상한 초과율 급등 → 9.1 ⑤ 런북(abstain·사람 전담 전환) P2 / 구판 인용 1건 → 9.1 ⑥ 런북(런북 검색 차단) P2 / 전파 끊김 → 끊긴 구간 변경 실행 금지 **P1** |
+| ⑥ Reasoning · 영향 분석 | `invoke_agent {impact}` → `retrieval.graph {dependsOn}` | 홉 수, `path_ids[]`, 예측 영향 서비스 수·목록, `cmdb_snapshot_version`, 최근 배포 이벤트 발견 여부, 영향 수 > 상한 여부 | 영향 범위 정밀도·재현율(사후 RCA 대비), CMDB 대조 불일치율, 영향 수 상한 초과 비율 | 불일치율 상승 → 9.1 ⑥ 런북(주 1회 대조 즉시 실행) P3 |
+| ⑦ Reasoning · 조치 제안·근거 검증·Reflection | `invoke_agent {remediate}` → `generation.generate`, `generation.verify {grounding}`(자식 `gate.evaluate {citation_rules}`, `generation.nli`), `generation.reflect` | 조치 후보별 등급(가역 / 비가역)·런북 단계 매칭 결과·근거 ID, 검증 통과·거부 사유 코드, 수치 ↔ 메트릭 쿼리 일치, `abstain`("원인 미확정"), Reflection 평가자 종류(규칙 / 결정 모델 / 다른 모델)·결과 | 근거 부합 통과율(9.1 ⑥ ≥ 95%), abstain 비율, 원인 적중률(사후 RCA, 9.1 ⑤), Reflection 거부율 | 통과율 < 95% 1시간 → 프롬프트·모델 버전 역추적 P2 |
+| ⑧ Reasoning · Rule ∧ Model 게이트 | `gate.evaluate {change_request}` → 자식 `routing.decide {requires_approval}` → `routing.shadow` | **`rules_applied[]`**(변경 창·prod 보호·승인자 분리·권한·영향 상한·런북 일치·멱등 가능 — 각 `rule_id`·`rule_version`·결과·matched_condition), `agent.rules_version`, `rule_and_model.combined`, `agent.decision`(auto / review / human_only), `agent.confidence`, θ_auto·θ_review, `agent.decision_source`, `fallback`(= 모두 승인), `agent.outcome=approval_required`, 조치 등급 | 게이트 차단률(규칙별), **세 갈래 비율**(auto / review / human_only), θ 폴백 비율, Rule ∧ Model 불일치율(규칙 통과 ∧ 모델 거부 등) | auto 비율 급증(θ 완화 의심) → θ 변경 이력·감사 레코드 대조 **P1** / 폴백 20% → 9.2 ① P2 |
+| ⑨⑩ Reasoning → Interaction · 승인 카드 | `ui.map`(규칙) + 이벤트 `approval.request {approval_id}` + 프론트 `ui.render {ApprovalCard \| ImpactGraph \| EvidencePanel \| DiffView}` | `approval_id`, `matrix_row_id`·`matrix_version`, 승인자 역할·**역할별 활성 승인자 수**, 시한·에스컬레이션 대상, 카드 표시 성공, `as_shown_hash`, `impact_graph_hash`, 기본 포커스 요소, 체크포인트 ID(정지 상태), `assertive` 라이브 영역 적용 | **승인 카드 표시 성공률(100%)**(9.1 ②), 승인 큐 길이(승인자당), 역할별 활성 승인자 0인 역할 수, 카드 렌더 p95 | 카드 미표시 1건 → `AWAITING_APPROVAL` 유지 확인 **P1** / 활성 승인자 0 역할 → 9.2 ② 런북(당일 배정) P2 / 큐 상한 초과 백프레셔 발동 → 9.2 ② P2 |
+| ⑪ Interaction → Reasoning · 승인·에스컬레이션 | `ui.event {approve \| reject \| modify \| escalate}` (헤더로 `trace_id` 되돌림) → `approval.resolve {approval_id}` | 승인자 역할·ID 해시, **`separation_verified`**(요청자 ≠ 승인자), `as_shown_hash`·`client_state_seq` 일치, 대리 권한 검증 결과, 에스컬레이션 단계·사유, 결과(approved / rejected / expired), 대기 시간, 수정된 파라미터 → 재승인 여부 | 승인 응답 p95·만료율·에스컬레이션 비율(9.1 ②), hash·seq 불일치 거부율, **만료 후 승인 처리 건수(0)**, 분리 위반 건수(0) | 만료율 급등 → 9.2 ② 런북 P2 / 만료 후 처리·분리 위반 1건 → **P1** |
+| ⑫ Action · 재허가·실행·보상·회복 확인 | `gate.evaluate {pre_exec_recheck}` → `tool.invoke {restart \| rollback \| scale}`(MCP CLIENT, 변경 등급) → `tool.compensate` → `generation.reflect {recovery}` | 재허가 결과·시각, **`agent.idempotency_key`**, 툴 정의 해시·버전, 결과 코드, 부분 실패(`succeeded[]` / `failed[]`), 상태 조회 후 재시도 횟수(상한 2), 보상(auto / proposed · 실행자), 회복 메트릭 쿼리 결과, 사람 전담 전환 여부, `ProgressTimeline` 패치 순서 | **승인 없는 변경·이중 실행 건수(0)·승인 후 규칙 차단 건수**(9.1 ③), 부분 실패율, 자동 보상률(가역만), 비가역 보상 자동 실행 건수(0), 사후 되돌림률(9.1 ④), 변경 툴 p95 | 이중 실행·승인 없는 변경 1건 → 9.1 ③ 런북(변경 툴 킬 스위치 + 사후 감사) **P1** / 비가역 보상 자동 실행 1건 **P1** / 부분 실패 → 9.2 ③ 런북(서비스 소유 팀 호출) P2 |
+| 예외 · break-glass·킬 스위치 | 이벤트 `exception.break_glass {exception_id}`, `killswitch.toggled` (트레이스 밖 이벤트, `incident_id`로 링크) | 조작자 역할, 사유(필수), 자동 복원 예정 시각, 사후 감사 참조, 대상 툴·범위, 등급 5 시도 여부(항상 거부) | **분기당 break-glass 건수(0이 정상)**, 72시간 내 사후 감사 완료율, 킬 스위치가 켜진 변경 툴 수(대시보드 상시) | **break-glass 사용 1건 → P1 즉시**(보안 책임자·운영 총괄 호출, 9.4) / 사후 감사 72시간 미완료 → P2 |
+
+**이 시나리오의 차별점 — 통제 체인을 트레이스 순서로 검증.** 실행된 변경마다 ⑧ `gate.evaluate {change_request}` → ⑨ `approval.request` → ⑪ `approval.resolve` → ⑫ `gate.evaluate {pre_exec_recheck}` → ⑫ `tool.invoke`(변경 등급)가 같은 `trace_id`에 이 순서로 있어야 한다. 순서 위반 쿼리 — `approval.resolve` 없이 변경 등급 `tool.invoke`가 있음, `resolve` 시각이 `expires_at` 이후, `pre_exec_recheck` 없이 `invoke`, 같은 `idempotency_key`로 결과 코드 성공이 2회, `approval_id`의 `as_shown_hash`와 `card_shown` 해시 불일치 — 가 3/13 트래젝토리 "금지 단계"의 **운영 버전**이며, 9.1 ③의 0건 카운터는 이 쿼리의 결과다. `rules_applied[]`는 ⑧과 ⑫에서 두 번 남아 "승인 후 규칙 차단"(사람과 규칙의 불일치 신호)이 두 스팬의 차집합으로 계산된다. break-glass는 쓰이지 않는 것이 정상이므로 알림이 임계값 없이 **1건 = P1**이다.
+
+**9.1 SLO → 측정 스팬·지표.**
+- ① 심각도 정확도·과소 판정 → ① `routing.decide {severity}`
+- ② 승인 응답·만료율·카드 표시 100% → ⑨⑪
+- ③ 승인 없는 변경·이중 실행·승인 후 차단 → ⑧⑪⑫ 체인 순서 쿼리
+- ④ 사후 되돌림률 → ⑫ `tool.compensate`·사후 RCA 라벨 + ⑧ ECE
+- ⑤ MTTR 기여 → ④⑤ 스텝·시간·변환기 오류 + ⑦ 적중률
+- ⑥ 구판 인용·근거 부합 → ④⑤ `runbook_step.version` ↔ 현행 버전 대조 + ⑦ 검증
+- ⑦ 감사 재구성 가능률 → 체인 네 고리 존재 여부 + MCP 전파 끊김률
+
+**9.2 장애 → 탐지 신호.**
+- ① 결정 모델 다운 → ①⑧ `fallback` 비율·서킷 이벤트
+- ② 승인자 부재·적체 → ⑨ 활성 승인자 0·큐 길이·⑪ 만료율·에스컬레이션 체인 끝 도달 수
+- ③ 툴 부분 실패 → ⑫ `partial_failure`·보상 종류·회복 확인 실패
+
+**대시보드 3장.**
+- ① 사용자(온콜) 관점 E2E: 알림 → 진단 보고서 p95, 원인 적중률, 승인 대기 p95·만료율·에스컬레이션 비율·큐 길이, 역할별 활성 승인자(0인 역할 강조), 사후 되돌림률, **승인 없는 변경·이중 실행·break-glass 카운터(상시 0)**.
+- ② 레이어별 SLI: Knowledge — CMDB 대조 불일치율·`superseded_by` 반영 지연·구판 인용(0)·PII 마스킹 누락(0)·로그 인프라 쿼리 p95; Reasoning — 심각도 정확도·과소 판정·ECE·세 갈래 비율·폴백율, **에이전트별**(supervisor / diagnose / impact / remediate) RED·스텝 상한 초과율·핸드오프 라우팅 정확도, Rule ∧ Model 규칙별 차단·불일치, 근거 부합 통과율; Interaction — 카드 표시 성공률(100%)·hash·seq 불일치·기본 포커스 검사 통과; Action — 재허가 결과·부분 실패·보상(auto vs proposed)·멱등 충돌; 횡단 — MCP 경계 전파 끊김률.
+- ③ 비용·판정 분포: 에이전트별·인시던트당 토큰·비용, 진단 루프 스텝 분포, 판정 지점 5곳(severity · duplicate · next_action · requires_approval · grounding)별 소스 분포·확신도 히스토그램·신뢰도 다이어그램, 섀도 결정 모델 × 운영 일치 매트릭스(Jev / Decisions API 각각), 로그 본문의 외부 모델 전송량(마스킹·압축 후), 모델 티어별 비용.
+
+**감사 추적 저장소로 분리되는 필드와 보존.** 9.4 감사 필드 표의 전 블록(상관 키·요청자/승인자·판정·근거/영향·규칙/변경 창·행동/승인 카드·실행/보상·예외·버전)을 ①⑧⑨⑪⑫ 스팬과 예외 이벤트에서 `trace_id`·`approval_id`·`incident_id` 기준으로 추출한다. 실행된 변경 1건 = 1레코드, append-only·해시 체인, 보존은 변경 관리 정책 기간(9.4), `agent_span_ids[]`로 관측 트레이스와 상호 참조. **감사 레코드는 동기 기록**이다 — 기록 실패 시 `tool.invoke`를 실행하지 않는다([Part 1/06](../01-foundations/06-evaluation-observability.md) "감사 레코드만은 동기"). 관측 트레이스는 비동기이며 거기에만 남는 것: 지연·토큰·스텝 수·섀도 판정·점수 분포·이벤트 카운터 — 메타데이터 보존 예시 90일(사후 RCA 주기에 맞춤), 본문(로그 발췌·진단 텍스트, opt-in·마스킹)은 예시 30일. 로그 속 고객 식별자는 어느 저장소에도 원문으로 없고, `evidence_refs[]`는 로그 저장소의 참조 ID만 가리킨다.
+
+**샘플링 정책.** 메타데이터 전수. 본문은 **조회 전용 턴**(진단만 하고 변경 제안이 없는 턴)에 한해 예시 5% 샘플. 테일 샘플링으로 전수 보존하는 것: 변경 제안이 1건이라도 포함된 턴, 승인·거절·수정·에스컬레이션·만료, `fallback=true`, abstain, 부분 실패·보상, Rule ∧ Model 불일치, hash·seq 불일치 거부, break-glass, 그리고 **P1 인시던트의 모든 턴**. 샘플링 단위는 턴이 아니라 **`incident_id`** — 한 인시던트의 어느 턴이 보존 조건에 걸리면 그 인시던트의 전 턴(알림 트레이스 포함)을 보존해 사후 RCA에서 체인이 끊기지 않게 한다. 변경 등급 `tool.invoke`·`approval.*`·`gate.evaluate` 스팬은 샘플링 대상이 아니다(어떤 조건에서도 전수).
+
+### 9.6 운영 준비도 리뷰(ORR) 통과 조건
 
 prod 가역 등급 연결(11주차) 전에 아래가 모두 체크되어야 하며, 비가역 등급 연결은 파일럿(12주차) 결과까지 본 뒤 별도 ORR을 거친다.
 
@@ -343,6 +385,8 @@ prod 가역 등급 연결(11주차) 전에 아래가 모두 체크되어야 하�
 - [ ] **[횡단]** 승인 매트릭스에 개인 이름이 없고 역할 ↔ 사람이 디렉터리 조회이며, 등급 3 이상 빈 행 없음과 역할별 활성 승인자 ≥ 1이 주간 배치로 점검된다
 - [ ] **[횡단]** break-glass 경로가 있고 사용 시 사유 필수·자동 복원·즉시 알림·72시간 사후 감사 레코드가 자동 생성되며, 등급 5에는 적용되지 않는다
 - [ ] **[횡단]** 실행된 변경 1건을 감사 레코드만으로 "누가 무엇을 어떤 근거·영향 범위를 보고 승인했고 규칙 버전은 무엇이었나"까지 재구성하는 리허설을 마쳤고, 7개 E2E SLO 알림마다 런북이 있으며, 승인 UI는 A/B 대상에서 제외되어 있다
+- [ ] **[횡단]** 실행된 변경마다 `gate.evaluate(rules_applied[]) → approval.request/resolve(approval_id, as_shown_hash) → gate.evaluate(pre_exec_recheck) → tool.invoke(idempotency_key)` 네 스팬이 같은 trace_id에 순서대로 있고, 순서 위반(승인 없는 invoke · 만료 후 resolve · 재허가 없는 invoke · 같은 멱등 키 성공 2회) 쿼리가 대시보드에 상시 0으로 표시되며 1건이면 P1이 울린다
+- [ ] **[횡단]** break-glass 사용(P1)·역할별 활성 승인자 0(P2)·MCP 경계 전파 끊김(P1)이 각각 알림으로 연결되어 있고, 감사 레코드는 동기 기록(실패 시 실행 안 함)·관측 트레이스는 비동기 기록이며 샘플링 단위가 `incident_id`임이 테스트로 확인되었다
 
 관련: [Part 7 개요](00-overview.md) · [시나리오 A](01-enterprise-document-qa.md) · [시나리오 B](02-commerce-assistant-genui.md) · [레퍼런스 아키텍처](../00-overview/01-reference-architecture.md) · [Part 1/02 System 1 vs System 2](../01-foundations/02-system1-vs-system2.md) · [Part 6/decision-models](../06-trends/decision-models.md) · [Part 6/neuro-symbolic](../06-trends/neuro-symbolic.md) · [Part 6/ontology-renaissance](../06-trends/ontology-renaissance.md) · [Part 6/agentic-protocols-convergence](../06-trends/agentic-protocols-convergence.md)
 

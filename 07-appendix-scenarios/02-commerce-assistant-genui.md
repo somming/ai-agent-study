@@ -317,7 +317,49 @@ updated: 2026-10-11
 
 보존 기간은 전자상거래 거래 기록 요건에 따라 **법무가 정한다**(이 위키에서 수치를 정하지 않는다). 리뷰 작성자 PII는 수집 시 마스킹되어 레코드에 들어오지 않고, 고객 ID는 가명 키로만 둔다. 추천 사유의 "왜"는 온톨로지 경로(`path` evidence)로 재구성하며 LLM 설명 텍스트는 보조 참조다(5/04).
 
-### 9.5 운영 준비도 리뷰(ORR) 통과 조건
+### 9.5 관측 설계 — 한 요청을 끝까지 따라가는 트레이스
+
+4절의 질의 흐름 ①~⑫를 스팬 트리로 옮긴다. 규약은 [Part 1/07 관측성 설계 요소](../01-foundations/07-operations-vocabulary.md)와 [Part 5/03](../05-cross-cutting/03-observability-tracing.md), 심각도는 1/07의 P1/P2/P3. 이 시나리오는 세 시나리오 중 유일하게 **프론트엔드가 1급 관측 원천**이다 — 과업 완료율·수정률·텍스트 폴백률은 `ui.render`·`ui.event` 스팬 없이는 계산할 수 없고, "사용자가 본 가격 = 실행 시점 가격"은 트레이스가 증명해야 한다. 그래서 AG-UI 어댑터가 `trace_id`를 이벤트 스트림에 실어 보내고 프론트가 모든 이벤트 요청 헤더(W3C Trace Context)에 되돌려 보내며, 레코드 근거 단위의 **`price_snapshot_version`**(`offer_id`·`valid_from`·`recorded_at`의 해시)이 ③ 검색 → ⑧ 렌더 → ⑩ 재확인 → 감사 `price_snapshot`까지 같은 값으로 따라간다. 모든 스팬에 버전 키 5종 + `agent.mapping_table_version`·`agent.ontology_version`·`agent.policy_set_version`, `tenant_id`, `channel`(web / mobile_web)이 붙는다.
+
+| 구간 (레이어 → 단계) | 스팬 이름 | 반드시 남길 속성 | 이 시나리오 전용 지표 | 알림 → 런북 |
+|---|---|---|---|---|
+| ① Interaction · 세션·질의 수신 | `turn` (루트) → `invoke_agent {commerce_assistant}`, 프론트 `ui.stream {session}`(AG-UI 연결 단위) | `session_id`, `customer_id`(가명 키), `logged_in`, 뷰포트 폭, AG-UI 이벤트 스키마 버전, 선호 메모리 로드 여부·항목 수, 이벤트 순서 번호 시작값 | 동시 스트림 수, 재접속률, 메모리 적중률 | 재접속률 급증 → 스트림 게이트웨이 백프레셔·스냅샷 재동기화 확인 P2 |
+| ② Reasoning · intent·슬롯 | `routing.decide {intent}` → 자식 `routing.shadow {decision_model}`, `generation.extract {slots}` | `agent.decision`(7개 중 하나), `agent.confidence`, θ, `agent.decision_source`, 질문 정의 버전, 슬롯 스키마 통과 여부, `agent.shadow_agreement` | intent 분포·ECE, **명확화 트리거율**(p < θ), 슬롯 스키마 실패율, 섀도 불일치율 | 명확화율 급증 또는 섀도 불일치 급등 → θ·질문 정의 점검, 벤더 변경 확인 P3 |
+| ③ Reasoning → Knowledge · 비교 워커 | `invoke_agent {compare_worker}` → `tool.invoke {product_query}`(변환기), `retrieval.graph {compatibleWith}`, `retrieval.search {reviews}` → `retrieval.rerank` | 스텝 수(상한 3)·재계획, 변환기 쿼리 해시·결과 수, 그래프 홉 수·`path_ids[]`, `agent.evidence_ids[]` — `record`(SKU + **`price_snapshot_version`**, `recorded_at`), `sentence`(작성자 마스킹 여부), `path`; `agent.index_version`; **후보 신선도** = 검색 시각 − 레코드 `recorded_at` | 스텝 상한 초과율(9.1 ①), 상품 검색 p95(2/04), 리뷰 리랭커 p95, **후보 레코드 CDC 지연 분포**(9.1 ④), 경로 불일치(벡터 답 ≠ 그래프 답) 건수 | 후보 신선도 p95 > 15분 → 9.2 ① 런북(가격 "확인 중" 저하) P2 / 스텝 초과율 급등 → 워커 프롬프트 롤백 P2 |
+| ④ Reasoning · 규칙 게이트 | `gate.evaluate {recommend}` | `rules_applied[]`(재고·유효 가격·판매 정책·호환 경로·후보 수 ≥ 2 — rule_id·version·결과), `agent.rules_version`, 차단 사유 코드, `substituteOf` 보충 발생 | 게이트 차단률(사유별), 품절 → 대체 보충률 | "유효 가격" 차단 급증 = CDC 지연의 **선행 신호** → 9.2 ① 런북 P2 |
+| ⑤ Reasoning · 생성·바인딩 검증 | `generation.generate` → `generation.verify {binding}` | 1/01 모델 호출 속성 + 비교 축 선택, 인용 `evidence_ids[]`, **`agent.generated_value_violation`**(가격·재고·배송 값이 레코드 바인딩이 아닌 생성 토큰에서 나옴), citation 존재 결과 | **생성 금지 규칙 위반 건수(0)**(9.1 ④), citation 존재율, 스키마 실패율 | 위반 ≥ 1 → 9.1 ④ 런북(프롬프트 즉시 롤백 + 샘플 전수 리뷰) **P1** |
+| ⑥ Reasoning · UI 판정 | `routing.decide {ui_intent}` | `agent.mapping_stage`(rule / ontology / model — 어느 단계에서 결정됐나), 후보 컴포넌트 집합, `agent.decision`(CompareTable), `agent.confidence`, θ, `agent.decision_source`, 섀도 일치, `agent.fallback_reason`, 매핑 캐시 적중, **행동 의도의 비규칙 단계 진입 여부** | UI 선택 정확도(골든셋 일일 재실행, 9.1 ②), 매핑 소스 분포, **텍스트 폴백률(원인별)**(9.1 ⑥), 행동 의도가 확률 단계로 흘러간 건수(0) | 폴백률 5분간 20% → 9.2 ② 런북(규칙 기본값·θ 상향) P2 / 행동 의도 비규칙 1건 → 설계 결함 **P1** |
+| ⑦⑧ Reasoning → Interaction · 스트리밍·렌더 | `ui.stream` 이벤트 카운터(텍스트 델타·커스텀 트리·스냅샷·패치, 순서 번호) + 프론트 `ui.render {CompareTable}` | 컴포넌트 인스턴스 ID, `agent.catalog_version`, 프론트 export 버전, 트리 해시, 트리 검증 결과(스키마 / 조합 / 바인딩), 접근성 런타임 검증 결과, 렌더 지연, 요약 카드 폴백 여부, **표시된 각 가격 셀의 `price_snapshot_version`**, 디자인 토큰 enum 위반 | 첫 컴포넌트 p95·비교표 완성 p95(9.1 ①), 트리 검증 실패율·접근성 실패율·렌더 실패율(9.1 ⑥), **카탈로그 ↔ export 버전 불일치 건수** | 특정 컴포넌트 렌더 실패 집중 → 9.1 ⑥ 런북(카탈로그 버전 대조·재로드 안내) P2 / 트리 검증 실패 집중 → 비교표 의도 요약 카드 고정 P2 |
+| ⑨ Interaction → Reasoning · 사용자 이벤트 | `ui.event {option_selected \| action_requested}` (헤더로 `trace_id` 되돌림) | 대상 인스턴스 ID, SKU·옵션(값은 해시·범주), `as_shown_hash`, `client_state_seq`, 패치 순서 번호, 서버 재검증 결과 ①~⑤ | **수정률·무시율**(9.1 ②), 순서 위반율, `as_shown_hash` 불일치 거부율, 렌더 → 첫 이벤트 시간 | hash 불일치 거부 급증 = 표시 후 가격 변동 **선행 신호** → 9.2 ① 확인 P2 / 순서 위반 급증 → 스냅샷 재동기화 강제 P2 |
+| ⑩ Reasoning · 정책·재확인·승인 | `gate.evaluate {add_to_cart}` → `routing.decide {requires_approval}`, `approval.request` → `approval.resolve` | 재확인 결과 — **표시 시점 vs 실행 시점 `price_snapshot_version` 일치 여부**·가격 변경 감지, `agent.decision_source=rule`(강제), `approval_id`, 매트릭스 행·버전, 승인 카드 표시 성공, 카드 내용 해시, 대기 시간, 결과(approve / reject / expired) | **표시 ↔ 담기 시점 가격 불일치율**(9.1 ④ < 0.5%), 승인 카드 표시 성공률(100%), 승인 대기 p95·만료율, `requires_approval`이 규칙 외 소스로 판정된 건수(0) | 승인 카드 미표시 1건 → 상태 머신 `AWAITING_APPROVAL` 확인 **P1** / 불일치율 > 0.5% → 9.2 ① 런북 P2 |
+| ⑪ Action · 장바구니 실행 | `tool.invoke {add_to_cart}` | `agent.idempotency_key`, 멱등 중복 히트(허용) vs 실제 이중 실행(불허), 결과 코드, optimistic "전송됨" 롤백 발생·이유 코드, 재검증기·멱등 저장소 상태(ok / unavailable → fail-closed), `agent.tool_version` | **승인 없는 실행·이중 실행 건수(0)**(9.1 ⑤), fail-closed 거부율(9.2 ③), 쓰기 툴 p95, optimistic 롤백률 | 이중 실행·승인 없는 실행 ≥ 1 → 9.1 ⑤ 런북(쓰기 킬 스위치) **P1** / fail-closed 거부율 급증 → 9.2 ③ 런북(쓰기 전면 중단 공지) **P1** |
+
+**이 시나리오의 차별점 — 프론트 렌더·이벤트·가격 시점을 한 트레이스로.** `price_snapshot_version`이 ③(후보 레코드) → ⑧(가격 셀 표시) → ⑩(담기 직전 재확인) → 9.4 감사 `price_snapshot`에서 같은 값인지 조인하면 "사용자가 본 가격 그대로 담겼는가"를 민원 전에 대시보드에서 본다. ⑧ 렌더 스팬의 컴포넌트 인스턴스 ID를 ⑨ 이벤트가 들고 돌아오므로 과업 완료율(장바구니 담기 또는 명시적 종료)·수정률·무시율이 제품 분석 도구와의 조인 없이 트레이스 안에서 계산된다 — 5/03 레이어 간 정합성 검토의 "Part 3는 벤더 SDK, Part 4는 제품 분석으로 따로 기록"을 피하는 구조다. 섀도 결정 모델 판정(②⑥)은 관측에만, 폴백 구간 턴은 `agent.outcome=fallback`으로 표시해 층화 A/B 데이터에서 제외한다(9.2 ②).
+
+**9.1 SLO → 측정 스팬·지표.**
+- ① 첫 컴포넌트·비교표 지연 → `turn` + ③⑦⑧ 분해
+- ② UI 선택 정확도·수정률 → ⑥ `routing.decide {ui_intent}` + ⑨ `ui.event`
+- ③ 과업 완료율 → ⑧ 인스턴스 ID ↔ ⑨⑪ 이벤트 조인(의도별)
+- ④ 재고·가격 불일치율·생성 위반 0 → ③ 후보 신선도 + ⑩ 재확인 + ⑤ `generated_value_violation`
+- ⑤ 승인 없는 실행·이중 실행 0 → ⑩ `approval.resolve` ↔ ⑪ `tool.invoke` 순서·멱등 키
+- ⑥ 텍스트 폴백률(원인별) → ⑥ `fallback_reason` + ⑧ 트리·접근성·렌더 실패
+- ⑦ 가용성 → 전 구간 `agent.degradation[]` 비율
+
+**9.2 장애 → 탐지 신호.**
+- ① CDC 지연 → ③ 후보 신선도·④ 유효 가격 차단·⑨ hash 불일치 세 신호
+- ② 결정 모델 폴백 폭증 → ②⑥ `fallback_reason`·서킷 이벤트
+- ③ 멱등 저장소 다운 → ⑪ fail-closed 거부율·optimistic 롤백률
+
+**대시보드 3장.**
+- ① 사용자 관점 E2E: 과업 완료율(의도 유형별 분해)·평균 턴 수, 첫 컴포넌트·비교표 p95, 텍스트 폴백률(원인별 스택), 저하 플래그 비율("확인 중" 가격 셀 비율), 승인 카드 표시 성공률·대기 p95·만료율, **승인 없는 실행·이중 실행·생성 위반 카운터(상시 0)**.
+- ② 레이어별 SLI: Knowledge — CDC 반영 지연·변경 큐 깊이·후보 신선도 분포·경로 불일치; Reasoning — intent ECE·명확화율, 게이트 차단(사유별), UI 매핑 소스 분포(rule / ontology / model)와 행동 의도 규칙 전용 확인, `requires_approval` 소스(규칙 100%); Interaction — 트리 검증·접근성·렌더 실패율, 카탈로그 ↔ export 일치, 순서 위반율, `as_shown_hash` 불일치율; Action — 멱등 중복 vs 이중 실행, fail-closed 거부율, optimistic 롤백률.
+- ③ 비용·판정 분포: 판정 지점 4곳(intent · ui_intent · next_action · requires_approval)별 비용·소스 분포·확신도 히스토그램, 섀도 결정 모델 × 운영 일치 매트릭스, 리뷰 LLM 처리 비용(건수 상한 대비 소진율), 시맨틱 캐시 적중률(가격 유효 시점이 키라 프로모션 중 급락이 정상), 모델 티어별 비용.
+
+**감사 추적 저장소로 분리되는 필드와 보존.** 9.4 감사 필드 표(승인 1건 = 1레코드)의 `price_snapshot`·`card_shown`·`ui`·`approval`·`execution`·`rules_applied`·`decisions`·`versions`를 ③⑥⑧⑩⑪ 스팬에서 `trace_id`·`approval_id` 기준으로 추출해 별도 저장소에 append-only로 쓴다. 보존 기간은 전자상거래 거래 기록 요건에 따라 **법무가 정한다**(9.4와 동일 — 이 절에서 수치를 정하지 않는다). 관측 트레이스에만 남는 것: 렌더 지연·이벤트 카운터·순서 번호·트리 해시·토큰·캐시·섀도 판정·A/B 층 표지 — 메타데이터 보존 예시 30일, 승인·폴백·불일치·위반 건은 90일. 본문 저장소(opt-in: 질의·생성 텍스트·인용된 리뷰 문장)는 예시 14일, 리뷰 작성자 PII는 수집 시 마스킹된 상태로만 들어오고 고객 ID는 가명 키뿐이다. 장바구니·주문 값(수량·금액)은 관측 스팬에 범주·해시로만, 원값은 감사 레코드에만.
+
+**샘플링 정책.** 메타데이터와 **모든 `ui.render`·`ui.event` 스팬은 전수**(완료율·수정률의 분모). 본문은 opt-in으로 예시 3% 샘플. 테일 샘플링으로 턴 단위 전수 보존하는 것: 승인 카드가 뜬 턴(승인·거절·만료 포함 — 민원 재구성 단위), 생성 금지 위반, 게이트 차단, hash·순서 불일치 거부, 트리·접근성 검증 실패, 텍스트 폴백, fail-closed 거부, 저확신(p < θ) 판정, 이중 실행 의심(멱등 중복 히트). 샘플링 결정은 `turn` 종료 시 한 번 — 백엔드 스팬은 있는데 같은 턴의 프론트 렌더 스팬이 샘플링돼 없는 상태를 만들지 않는다. 프로모션 기간에는 본문 샘플률을 낮추되 ③ 후보 신선도와 ⑩ 재확인 결과는 어떤 경우에도 전수다.
+
+### 9.6 운영 준비도 리뷰(ORR) 통과 조건
 
 전 카테고리 확대(12주차) 전에 아래가 모두 체크되어야 한다.
 
@@ -336,6 +378,8 @@ updated: 2026-10-11
 - [ ] **[횡단]** 감사 레코드에 `price_snapshot`·`card_shown`·`catalog_version`·규칙 버전이 있고, 민원 1건을 레코드만으로 재구성하는 리허설을 마쳤다
 - [ ] **[횡단]** 7개 E2E SLO 대시보드와 알림·런북이 있고, 승인 카드는 A/B 대상에서 제외되어 있다
 - [ ] **[횡단]** RACI 모든 행에 A가 있고, 기술 부채가 기록되어 있다 — "결제는 에이전트 밖", "A2UI 보류·네이티브는 요약 카드", "리뷰 속성은 샘플링 수준", "결정 모델은 섀도"
+- [ ] **[횡단]** 한 턴의 트레이스에서 `price_snapshot_version`이 `retrieval(record evidence) → ui.render(표시 가격 셀) → gate.evaluate(담기 직전 재확인) → 감사 price_snapshot`까지 같은 값으로 이어지고, 불일치 쿼리가 대시보드에 있다
+- [ ] **[횡단]** 프론트 `ui.render`·`ui.event` 스팬이 백엔드 스팬과 같은 trace_id·같은 백엔드에 전수 기록되어 과업 완료율·수정률이 외부 조인 없이 계산되며, 승인 카드 미표시·행동 의도의 비규칙 매핑·이중 실행·생성 금지 위반이 각각 P1 알림으로 연결되어 있다
 
 관련: [Part 7 개요](00-overview.md) · [시나리오 A](01-enterprise-document-qa.md) · [시나리오 C](03-ops-incident-agent.md) · [레퍼런스 아키텍처](../00-overview/01-reference-architecture.md) · [Part 6/generative-ui](../06-trends/generative-ui.md) · [Part 6/ontology-renaissance](../06-trends/ontology-renaissance.md) · [Part 6/decision-models](../06-trends/decision-models.md) · [Part 1/05 에이전트 프로토콜](../01-foundations/05-agentic-protocols.md)
 

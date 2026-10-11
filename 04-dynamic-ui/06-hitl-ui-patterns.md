@@ -213,6 +213,36 @@ SLI 후보: 승인 카드 표시 성공률(요구 대비), **표시 → 결정 �
 
 가장 자주 바뀌는 것: **승인 매트릭스·승인자**(조직 변경, 월 단위) > 이유 코드 > 카드 내용 기준(규제) > 패턴 자체(거의 안 바뀜). 코드 밖 설정으로 둘 것: 승인 매트릭스(시한 포함 — 3/12 소유, UI는 읽기만, 불균형 ⑤ 반영), 에스컬레이션 경로, 이유 코드 enum, 요약 템플릿. 포트·어댑터 뒤에 둘 외부 의존: 승인함·알림 채널(이메일·메신저로 에스컬레이션 시).
 
+### 관측성 — 이 단계에서 무엇을 기록·측정·알림하는가
+
+운영 안정성의 "탐지 신호"가 **실제로 어디서 나오는지**를 설계한다. 기준은 [Part 1/07 관측성 설계 요소](../01-foundations/07-operations-vocabulary.md)와 [Part 5/03](../05-cross-cutting/03-observability-tracing.md). 승인은 1/07 스팬 계층의 `approval.request → approval.resolve` 이벤트 쌍(발행은 [3/12](../03-agent-workflow-rag/12-guardrails-hitl.md))이고, 이 페이지는 그 사이에 **클라이언트 보고 두 개**(`approval.display`, `approval.decide`)를 끼워 넣는다. 네 시각이 같은 `approval_id`로 묶여야 공통 SLI와 하위 SLI가 분리된다:
+
+- **공통 SLI "승인 응답 시간"** = `approval.resolve` 시각 − `approval.request` 시각 (요청 생성 → 결정 수신, 3/12 소유)
+- **하위 SLI "표시 → 결정"** = `approval.decide` 시각 − `approval.display` 시각
+- **적체(요청 → 표시)** = `approval.display` 시각 − `approval.request` 시각. 공통 SLI가 나쁜데 하위 SLI가 좋으면 사람이 아니라 **전달·렌더**가 느린 것
+- 클라이언트 시각은 시계 오차가 있으므로 보고 **수신 시 서버 시각으로 정규화**하고, 표시 → 결정은 클라이언트 단조 시계의 상대값으로 보고한다
+
+| 기록 대상 | 스팬 / 이벤트 (이름, 부모) | 핵심 속성 (버전 키 포함) | 지표 (→ 어느 SLI) | 샘플링 · 보존 · PII |
+|---|---|---|---|---|
+| 요청 → 카드 표시 | `approval.request`(3/12, `agent.approval_id`) → 클라이언트 `approval.display` (부모 `ui.render {approval_card}`, 같은 `request_id`·`approval_id`) | `agent.approval_id`, 행동 등급, `agent.card_shown_hash`(= `as_shown_hash`), 카드 컴포넌트 버전, `agent.platform`, `agent.renderer_version`, 정규화된 표시 시각 | **승인 카드 표시 성공률**(분모 `approval.request` 수, 분자 `approval.display` 수), 요청 → 표시 적체 p95 | **전수**. 카드 내용 전문은 감사 레코드로, 관측에는 해시만 |
+| 결정 | 클라이언트 `approval.decide` → 서버 `ui.event.verify`(type=approval, [04](04-streaming-state-sync.md)) → `approval.resolve` | `agent.decision`(approve / reject / edit), 이유 코드, `delegated_from` 해시, 멱등 키 해시, `as_shown_hash` 대조 결과, `agent.rules_version` | 표시 → 결정 p50·p95(하위 SLI), 거절률·이유 분포, `as_shown_hash` 불일치율, 멱등 중복 히트율 | 전수 |
+| 만료·에스컬레이션 | 상태 머신 측 이벤트 `approval.expire` / `approval.escalate`(3/12의 `approval_expired`·`approval_escalated`) | 만료 예정 시각, 적용 기본값(reject), from/to 역할, 결과 | 타임아웃 만료율, **만료 예정 경과 미처리 수(게이지)**, 에스컬레이션 성공률 | 전수 |
+| 사후 되돌림 | 행동 실행 후 보상·취소 이벤트를 `approval_id`로 역조인(배치) | 되돌림 사유 코드 | 사후 되돌림률 → 승인 피로 지표 | 배치 집계 |
+| citation 바인딩 | `ui.validate {validator=citation_binding}` + 클라이언트 `ui.render {citation_block}` | Part 2/08 스키마 버전, 결과 | citation 바인딩 실패율 | 전수 |
+| 피드백 이벤트 | 클라이언트 `ui.event {type=feedback}` + 전송 재시도 카운트 | 이유 코드, 로컬 큐 지연 | 피드백 전송 실패율 | 전수(자유 텍스트는 opt-in) |
+
+| 알림 | 조건 (예시) | 심각도 | 런북 (첫 3단계) |
+|---|---|---|---|
+| **승인 카드 미표시** | `approval.request` 후 예시 30초 내 `approval.display` 없음 ≥ 1건. 단 같은 세션의 다른 `ui.render` 보고는 도착하는지 확인해 **보고 수집률 저하와 구분** | **P1** | ① 해당 `approval_id`가 `AWAITING_APPROVAL`에 머물고 실행 0건인지 확인 ② `approval_pending_display_failed` 에러 카드 표시 보고 확인 ③ 매핑 / 렌더 / 스키마 중 실패 지점 분리 → 승인함 안내 |
+| 만료 미처리 | 만료 예정 경과 미처리 수 > 0, 5분 | **P1** | ① 만료 스캔 배치 상태 ② 보수적 종료(실행 안 함) 수동 실행 ③ UI 갱신 확인 |
+| 에스컬레이션 실패 | ≥ 1건 | P2 | ① 경로·역할 확인 ② 운영자 승인함 전달 확인 ③ 승인 매트릭스 수정 |
+| 승인 피로 | 유형별 표시 → 결정 중앙값 < 예시 2초 ∧ 거절률 0%(1일), 또는 되돌림률 > 예시 2% | P3 | ① 유형·승인자 역할별 분포 ② 되돌림 사례 샘플 ③ 3/12 게이팅 임계값 재검토 안건(UI는 자동 조정하지 않음) |
+| `as_shown_hash` 불일치 급증 | > 예시 1%, 1시간 | P2 | ① 서버·클라이언트 해시 계산 버전 비교 ② 승인 대기 중 인자 변경 트레이스 ③ 설계 결함 등록 |
+
+**대시보드에서 이 단계를 보는 뷰**: ① E2E의 승인 대기 패널에 공통 SLI와 하위 SLI를 **나란히**, 차이를 적체로 표시 / ② Interaction 패널의 "표시 성공률·거절 이유·만료 미처리".
+**감사 추적으로 넘기는 필드(관측 로그와 분리)**: 카드 표시 내용 전문 + `as_shown_hash`, 표시 시각, 승인자·시각·결정·이유 코드, `delegated_from`, 만료 여부, 카드 컴포넌트 버전 — 관측 스팬에는 해시만.
+**이 단계의 관측이 없으면 못 보는 장애**: 적체. 공통 SLI만 보면 "승인이 느리다"로 보이지만 `approval.display` 없이는 사람이 느린지 카드가 늦게 뜬 건지 구분하지 못하고, 미표시는 아예 "대기 중"으로만 보인다.
+
 ### 거버넌스 접점 — 정책 · 가드레일 · 승인 · 감사
 
 | 항목 | 이 단계에서의 답 |
@@ -232,6 +262,8 @@ SLI 후보: 승인 카드 표시 성공률(요구 대비), **표시 → 결정 �
 - [ ] 카드에 표시된 내용 전문과 해시가 샘플링 없이 감사 저장소에 남는가
 - [ ] 등급 4 행동에 2인 승인 카드, 등급 5에 실행 버튼 없는 제안 카드가 구현돼 있는가
 - [ ] citation 스키마 변경 시 근거 영역만 저하되고 카드는 유지되는가
+- [ ] `approval.request` → `approval.display` → `approval.decide` → `approval.resolve` 네 시각이 같은 `approval_id`로 연결되어 적체와 하위 SLI가 분리 계산되는가
+- [ ] 승인 카드 미표시 알림이 클라이언트 보고 수집률 저하와 구분되는가
 
 ## 최신 트렌드 적용 (최근 1년)
 

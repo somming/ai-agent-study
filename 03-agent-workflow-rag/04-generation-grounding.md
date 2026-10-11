@@ -199,6 +199,32 @@ SLI 후보: 근거 부합률(faithfulness, 샘플 judge), citation 정확도, �
 
 가장 자주 바뀌는 것: 프롬프트(주 단위) ≈ 모델 버전(벤더 일정, 월~분기) > 응답 스키마 > 검증기 모델. 코드 밖 설정으로 둘 것: 생성 프롬프트 템플릿, 응답 스키마 정의, 검증기 임계값, 재생성 상한, 폴백 모델 매트릭스, 금칙·면책 규칙. 포트·어댑터 뒤에 둘 외부 의존: 생성 모델 API(벤더 둘 이상), NLI·결정 모델 서빙, LLM judge, 온톨로지·KG 조회.
 
+### 관측성 — 이 단계에서 무엇을 기록·측정·알림하는가
+
+운영 안정성의 "탐지 신호"가 **실제로 어디서 나오는지**를 설계한다. 기준은 [Part 1/07 관측성 설계 요소](../01-foundations/07-operations-vocabulary.md)와 [Part 5/03](../05-cross-cutting/03-observability-tracing.md). 이 단계는 요청당 토큰 비용의 대부분과 **검증 판정**이 발생하는 자리라, 모델 호출 스팬(`gen_ai.*`)과 검증 스팬을 분리해 기록해야 "비용은 어디서, 거부는 왜"를 따로 답할 수 있다. OTel GenAI 속성은 Development 등급이므로 매핑 계층을 거쳐 붙인다.
+
+| 기록 대상 | 스팬 / 이벤트 (이름, 부모) | 핵심 속성 (버전 키 포함) | 지표 (→ 어느 SLI) | 샘플링 · 보존 · PII |
+|---|---|---|---|---|
+| 생성 호출 | `generation.generate` (부모 `invoke_agent`) + 모델 호출 자식(`gen_ai.request.model`, `gen_ai.usage.input_tokens/output_tokens`, `gen_ai.response.finish_reasons`) | `agent.model_version`, `agent.prompt_version`, `agent.cached_tokens`, `agent.ttft_ms`, `agent.attempt`(재생성 n), `agent.limit_hit`(재생성 상한), `agent.outcome`=fallback, `agent.fallback_model`, `agent.cost_estimate`, `agent.circuit_state`(벤더별) | 벤더별 오류율·p95, **첫 토큰 지연**, **생성 p95**, 폴백 모델 사용률, **재생성 횟수 분포**·상한 도달률, 요청당 토큰·비용 → 생성 모델 다운, 재생성 루프 폭주 | 메타 전수, 프롬프트·출력 본문 opt-in(예시 1~5%), 실패·폴백·abstain 건은 전수(마스킹) |
+| 스키마 검증 | `generation.verify schema` (부모 `generation.generate`, 시도마다) | `agent.schema_version`(응답 스키마), 통과 여부, 실패 코드(필수 필드 누락/타입/citation 형식) | **스키마 실패율**(모델 버전별 분해) → 스키마 검증 실패 폭증 | 전수, 실패 건 출력 본문 전수 |
+| 규칙·정합성 검증 | `generation.verify grounding` (부모 `invoke_agent`; 규칙 → NLI·결정 모델 자식 스팬) | `agent.verifier_kind`(rule/nli/decision_model), `agent.verifier_version`, `agent.threshold`, `agent.claim_count`·합격·불합격 수, `agent.evidence_ids[]`(인용 ID), `agent.citation_subset_ok`(인용 ⊂ 검색 결과 자동 검증), 거부 사유 코드, `agent.risk_level`, `agent.degradation[]`=`grounding_unverified`, `agent.outcome`=blocked(등급 2 이상 fail-closed) | 검증기 오류율·p95, **검증기 적용률**(등급 2 이상 = 100%), 검증 통과율·거부 사유 분포, **citation 정확도**(자동 검증 부분), `grounding_unverified` 비율(등급 1) → 검증기 다운 | 메타 전수, 불합격 주장 본문 전수(마스킹) |
+| 출력 가드레일 | `gate.evaluate output_policy` (부모 `invoke_agent`, 검증 뒤) | `agent.decision`(pass/block/degrade), `agent.rule_ids[]`, `agent.rules_version`(금칙·PII), `agent.pii_detected`·`agent.pii_masked` | 출력 차단률(사유별), PII 탐지율 | 차단 건 전수, 본문은 마스킹 후 참조만 |
+| 최종 결과·abstain | `invoke_agent` 종료 속성 | `agent.outcome`, `agent.abstain_reason`(사유 코드), `agent.confidence`(응답 확신도), 저하 플래그 합집합(검색 저하 포함) | **abstain 비율**·사유 코드 분포(검색 저하 플래그와 교차), 확신도 히스토그램 → abstain 비율 급변 | 메타 전수, abstain 건 본문 전수 |
+| 품질 샘플(비동기) | 별도 트레이스 `eval.judge` → 원 trace에 **링크** | judge 모델·프롬프트 버전, faithfulness 점수, 사람 라벨 여부·일치, 대상 요청의 버전 키 5종 | **근거 부합률(faithfulness, 샘플 judge)**, judge-사람 불일치율, 검증기 거짓 합격률(검증 통과 ∧ judge 불합격) → 검증기 거짓 합격 드리프트 | 샘플 1~5%(예시), 저확신·abstain·등급 2 경로는 가중 샘플, 본문은 샘플 건만 보존 |
+| 결과·프롬프트 캐시 | 이벤트 `cache.lookup` / `cache.invalidate`, 배포 시 `cache.key_schema_check` | `agent.cache_hit`, `agent.cache_kind`(result/prompt), 키 구성 버전(프롬프트·모델·테넌트·인덱스·근거 묶음 해시 포함 여부), 무효화 원인(tombstone/version)·원천 이벤트 ID | 캐시 히트율, **삭제 이벤트 → 결과 캐시 제거 p95**, 배포 검증 실패 건수(키에 버전 미포함) → 프롬프트 캐시 오염 | 전수, 키는 해시만 |
+
+| 알림 | 조건 (예시) | 심각도 | 런북 (첫 3단계) |
+|---|---|---|---|
+| 생성 폴백 급증 | `agent.outcome=fallback` 비율 10분간 50% 초과, 또는 벤더 서킷 열림 | P1 | ① 벤더 상태·서킷·폴백 모델 한도 잔량 확인 ② 폴백 모델이 현재 프롬프트 버전으로 호환 매트릭스에 "통과"인지 확인 ③ 지속 시 "근거 목록만 제시" 저하 강제, 첫 토큰 지연 SLO 위반 공지 |
+| 스키마 실패·재생성 상승 | 스키마 실패율 5% 초과, 또는 재생성 상한 도달률 3% 초과 | P2 | ① 모델 버전별로 분해 — 벤더 자동 업데이트 여부 확인 ② 프롬프트·스키마 최근 버전 변경 확인, 필요 시 롤백 ③ 등급 1 자유 텍스트 저하 비율과 등급 2 abstain 비율 확인 |
+| **검증기 장애(등급 2 이상)** | `generation.verify grounding` 오류 1건 이상, 또는 등급 2 이상 경로 검증기 적용률 < 100% | **P1 즉시** | ① fail-closed 동작 확인 — `agent.outcome=blocked` 증가와 검증 스팬 없는 등급 2 응답 0건 ② 검증기 서빙 상태·p95 확인 ③ 등급 1 `grounding_unverified`가 Interaction 끝점까지 전달·고지되는지 확인 |
+| 거짓 합격 드리프트 | judge-사람 불일치율 또는 "검증 통과 ∧ judge 불합격" 비율이 ±5%p 이동 | P2 | ① 검증기·judge·모델 버전 변경 이력 확인 ② 샘플 리뷰 비율 상향(보수적 방향만) ③ 임계값 완화는 사람 결정 + 사후 샘플 감사([12](12-guardrails-hitl.md)) |
+| abstain 비율 급변 | abstain 비율이 베이스라인 ±50% | P2 | ① 사유 코드 분포 확인 — 근거 부족 vs 불합격 vs 정책 ② 검색 저하 플래그(`dense_unavailable` 등)와의 교차 비율로 원인이 [02](02-query-understanding.md)·[03](03-retrieval-reranking.md)인지 분리 ③ 억지 답변 쪽(너무 낮음)이면 faithfulness 샘플 즉시 확대 |
+
+대시보드에서 이 단계를 보는 뷰: ② Reasoning 패널 "생성·검증" — 생성 p95·첫 토큰 지연, 스키마 실패율, 검증 통과·거부 사유 분포, abstain 사유, `grounding_unverified` 비율 / ③ 비용·판정 분포 — 요청당 토큰·비용 분포, 캐시 토큰 비율, 모델 티어 비중, 재생성 분포, 응답 확신도 히스토그램 / ① E2E — 저하율 중 `grounding_unverified` 분해, faithfulness 샘플 추이.
+감사 추적으로 넘기는 필드(관측 로그와 분리): 프롬프트·모델 버전(폴백 여부), 응답 스키마 버전, 주장별 citation(source_id·span), 검증기 종류·버전·판정·확신도, 불합격 주장과 처리, 재생성 횟수, abstain 사유 코드, 캐시 히트 여부 — 거버넌스 접점 표와 동일. 생성 출력 원문은 감사 저장소에 장기 보존, 관측 로그에는 참조만.
+이 단계의 관측이 없으면 못 보는 장애: **검증 없이 나간 답** — 검증기 다운이 저하로 처리되면 오류율은 0이고 지연은 오히려 줄어든다. `generation.verify` 스팬의 적용률과 `grounding_unverified` 비율을 세지 않으면 가짜 citation은 몇 주 뒤 사용자 신고로 발견된다. 그리고 **벤더의 조용한 모델 업데이트** — 같은 모델 ID로 출력 분포가 바뀌면 스키마 실패율을 모델 버전별로 분해하지 않는 한 "프롬프트 탓"으로 오진한다.
+
 ### 거버넌스 접점 — 정책 · 가드레일 · 승인 · 감사
 
 | 항목 | 이 단계에서의 답 |
@@ -217,6 +243,8 @@ SLI 후보: 근거 부합률(faithfulness, 샘플 judge), citation 정확도, �
 - [ ] 캐시 키에 프롬프트 버전·모델 버전·테넌트·인덱스 버전이 포함되는가
 - [ ] 트레이스에 주장별 citation·검증 판정·버전 키가 있어 "그때 그 답의 근거가 무엇이었나"를 재구성할 수 있는가
 - [ ] 검증기 거짓 합격률을 주기적 샘플 리뷰로 측정하는 절차와 담당(R)이 있는가
+- [ ] `generation.verify grounding` 스팬 적용률을 위험 등급별로 세고, 등급 2 이상에서 100% 미만이면 P1 알림이 되는가
+- [ ] 스키마 실패율·요청당 토큰이 모델 버전별로 분해되어 벤더의 조용한 모델 업데이트를 프롬프트 문제와 구분할 수 있는가
 
 ## 최신 트렌드 적용 (최근 1년)
 

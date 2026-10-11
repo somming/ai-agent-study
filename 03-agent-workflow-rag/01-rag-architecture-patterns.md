@@ -182,6 +182,31 @@ SLI 후보: 경로별 p95 지연, 요청당 LLM 호출 수 분포, 경로별 근
 
 가장 자주 바뀌는 것: 지식(코퍼스, 매일) > 패턴 배정표·경로 구성(주~월) > 프롬프트 > 모델 > 프레임워크. 코드 밖 설정으로 둘 것: 패턴 배정표, 경로별 모듈 구성(k·리랭커·압축), 루프 상한, 컨텍스트 예산, 폴백 모델 목록. 포트·어댑터 뒤에 둘 외부 의존: 생성 모델 API, 임베딩 API, 벡터DB, 그래프DB, 리랭커 서빙.
 
+### 관측성 — 이 단계에서 무엇을 기록·측정·알림하는가
+
+운영 안정성의 "탐지 신호"가 **실제로 어디서 나오는지**를 설계한다. 기준은 [Part 1/07 관측성 설계 요소](../01-foundations/07-operations-vocabulary.md)와 [Part 5/03](../05-cross-cutting/03-observability-tracing.md). 이 페이지의 관측 단위는 **경로(route)**다 — 모든 지표를 경로별로 분해하지 않으면 패턴 배정표가 맞는지 틀린지 알 수 없다. 검색·생성 내부 스팬의 상세 규약은 [02](02-query-understanding.md)·[03](03-retrieval-reranking.md)·[04](04-generation-grounding.md)에 두고, 여기서는 경로 수준에서 묶어 본다.
+
+| 기록 대상 | 스팬 / 이벤트 (이름, 부모) | 핵심 속성 (버전 키 포함) | 지표 (→ 어느 SLI) | 샘플링 · 보존 · PII |
+|---|---|---|---|---|
+| 경로 선택 | `routing.decide` (부모 `invoke_agent rag`) | `agent.decision`(route), `agent.confidence`, `agent.decision_source`, `agent.rules_version`(패턴 배정표 버전), `agent.prompt_version`(라우터 프롬프트) | 경로별 요청 비율(베이스라인 대비), 경로 선택 확신도 히스토그램, 경로-비용 분포(경로 × 요청당 비용) → 라우터 오판 탐지 | 메타 전수, 질의 원문은 해시만 |
+| 경로 실행 전체 | `invoke_agent rag` 루트 속성 (턴 종료 시 집계) | `agent.route`, `agent.search_count`, `agent.hop_count`, `agent.llm_call_count`, `agent.limit_hit`(search/token/time/community), `agent.outcome`, `agent.degradation[]`, 버전 키 5종 | **경로별 p95 지연**, **요청당 LLM 호출 수 분포**(p50/p95), 상한 도달률, **폴백·저하 발생률**(저하 코드별) → Agentic 루프 폭주·GraphRAG 글로벌 폭발 | 메타 전수, 상한 도달·폴백 건은 본문 전수 |
+| 인덱스별 검색·리랭킹 | `retrieval.search {dense·bm25·graph}`, `retrieval.rerank` (자식, 상세 [03](03-retrieval-reranking.md)) | `agent.index_version`(인덱스별), `agent.candidate_count`, `agent.circuit_state`, `agent.degradation[]`=`dense_unavailable`·`rerank_skipped`·`graph_truncated` | 인덱스별 오류율·p95, 후보 0 비율, 리랭킹 생략률 → 임베딩·벡터DB 장애, 리랭커 타임아웃 | 메타 전수 |
+| GraphRAG 글로벌 경로 | `retrieval.search graph.global` + map/reduce 모델 호출 자식(`gen_ai.*`) | `agent.community_count`, `agent.summary_level`, `agent.mapreduce_calls`, `agent.limit_hit`=community | map-reduce 호출 수 분포, 커뮤니티 상한 도달률 → 글로벌 경로 폭발 | 메타 전수, 커뮤니티 요약 본문 opt-in |
+| 생성·폴백 | `generation.generate` + 모델 호출 자식(`gen_ai.request.model`, `gen_ai.usage.input_tokens/output_tokens`, 상세 [04](04-generation-grounding.md)) | `agent.model_version`, `agent.prompt_version`, `agent.fallback_model`, `agent.outcome`=fallback, `agent.cached_tokens`, `agent.abstain_reason` | 벤더별 오류율·p95, 폴백 모델 사용률, **abstain 비율**, **경로별 근거 부합률**(faithfulness, 샘플 judge — 비동기 트레이스를 원 trace에 링크) → 생성 모델 다운 | 메타 전수, 프롬프트·출력 본문 opt-in(예시 1~5%), 실패·abstain·폴백 건은 전수(마스킹) |
+| 결과·시맨틱 캐시 | 이벤트 `cache.lookup` / `cache.invalidate` (부모 `invoke_agent rag`; 삭제 레인 소비 측은 배치 `sync.*` 트레이스) | `agent.cache_hit`, `agent.cache_kind`(result/semantic/prompt), 캐시 키 구성 버전(테넌트·인덱스 버전·프롬프트 버전·주체 집합 해시 포함 여부), 무효화 원인(index_version/tombstone/acl_event)과 원천 이벤트 ID | 캐시 히트율(종류별), **삭제 이벤트 → 결과·시맨틱 캐시 제거 p95**(톰스톤 발행 시각 − `cache.invalidate` 시각), 히트 응답의 ACL 재확인 비율(=100%) | 전수, 질의·키는 해시만 |
+
+| 알림 | 조건 (예시) | 심각도 | 런북 (첫 3단계) |
+|---|---|---|---|
+| 생성 폴백 급증 | `agent.outcome=fallback` 비율이 10분간 50% 초과, 또는 생성 벤더 서킷 열림 | P1 | ① 벤더 상태·서킷 상태와 폴백 모델의 한도 잔량 확인 ② 폴백 모델 사용률이 호환 매트릭스 범위 안인지 확인 ③ 지속 시 "근거 목록만 제시" 저하를 강제하고 Interaction 고지 확인 |
+| 검색 저하 지속 | `agent.degradation`에 `dense_unavailable` 또는 `bm25_unavailable`이 5분 지속, 또는 후보 0 비율 10% 초과 | P2 | ① 임베딩 API·벡터DB·BM25 서킷 상태 확인 ② 저하 플래그가 [04](04-generation-grounding.md)로 전달되어 확신도가 낮아지는지 확인 ③ 원인 추적은 [03](03-retrieval-reranking.md) 런북으로 이관 |
+| 리랭킹 생략률 상승 | `rerank_skipped` 비율 20%가 10분 지속 | P2 | ① 리랭커 서빙 p95·포화 확인 ② 후보 수 N 임시 축소 ③ 고정 k 운영 중임을 [04] 측에서 인지하는지 확인 |
+| 상한 도달률 상승 | `agent.limit_hit` 비율(루프·커뮤니티) 5% 초과 | P2 | ① 경로·테넌트별로 분해해 특정 경로인지 확인 ② 종료 판정 질문 정의·상한 설정의 최근 버전 변경 확인 ③ 상한을 보수적 방향(하향)으로만 임시 조정 |
+| 경로 분포 이탈 | `routing.decide` 경로별 비율이 베이스라인 ±50%, 또는 경로-비용 분포 이상 | P3 | ① 패턴 배정표·라우터 모델 버전의 변경 이력 확인 ② 경로 선택 확신도 히스토그램에서 θ 주변 질량 확인 ③ [02](02-query-understanding.md) 라우터 평가셋 재측정 |
+
+대시보드에서 이 단계를 보는 뷰: ① E2E — 경로별 p95·폴백·저하율(저하 코드별) / ② Reasoning 패널 — 요청당 LLM 호출 수·검색 횟수 분포, 상한 도달률, 리랭킹 생략률 / ③ 비용·판정 분포 — 경로 × 요청당 비용 히트맵, 경로 선택 확신도 히스토그램, 결정 소스 분포, 캐시 히트율.
+감사 추적으로 넘기는 필드(관측 로그와 분리): 요청 ID·테넌트, 선택 경로·확신도·결정 소스, 적용 ACL 필터(주체 해시·규칙 버전), `agent.evidence_ids[]`, 인덱스 버전 3종, 프롬프트·모델 버전(폴백 여부), 저하 플래그, 캐시 히트 여부 — 거버넌스 접점 표의 필드와 동일.
+이 단계의 관측이 없으면 못 보는 장애: **경로-비용 불일치** — 라우터가 단순 질의를 멀티홉 경로로 보내 요청당 비용이 3배가 되어도 오류율 0, 전체 평균 지연 정상이라 경로별 분해 없이는 보이지 않는다. 그리고 **삭제된 문서를 계속 내보내는 캐시 히트** — 인덱스 버전은 그대로이므로 `cache.invalidate`의 톰스톤 원천과 제거 p95를 재지 않으면 발견 경로가 사용자 신고뿐이다.
+
 ### 거버넌스 접점 — 정책 · 가드레일 · 승인 · 감사
 
 | 항목 | 이 단계에서의 답 |
@@ -200,6 +225,8 @@ SLI 후보: 경로별 p95 지연, 요청당 LLM 호출 수 분포, 경로별 근
 - [ ] 캐시 키에 테넌트·인덱스 버전·프롬프트 버전·주체 집합 해시가 포함되고, TTL ≤ 주체 해석 TTL이며, 문서 톰스톤·ACL 이벤트가 캐시를 무효화하는가 (불균형 ①·② 반영)
 - [ ] 트레이스에 경로·근거 ID·인덱스·프롬프트·모델 버전이 있어 과거 응답을 시점 재현할 수 있는가
 - [ ] 패턴 배정표와 ACL 각각의 A가 지정되어 있는가
+- [ ] 모든 지표가 경로별(`agent.route`)로 분해되고, `routing.decide`의 확신도·결정 소스가 대시보드 ③ 히스토그램·분포에 올라가는가
+- [ ] `cache.invalidate`에 무효화 원천(톰스톤·ACL 이벤트) ID가 남아 "삭제 이벤트 → 결과·시맨틱 캐시 제거 p95"를 실제로 측정하고 있는가
 
 ## 최신 트렌드 적용 (최근 1년)
 

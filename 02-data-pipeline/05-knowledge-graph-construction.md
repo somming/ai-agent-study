@@ -220,6 +220,31 @@ SLI 후보: ① SHACL·근거 검증 통과율 ② 추출 정밀도(월 1회 샘
 
 가장 자주 바뀌는 것: **지식**(문서) — 문서 단위 증분으로 흡수. 그 다음 **도메인 모델**(온톨로지 변경). 온톨로지 변경을 **재추출 없이 매핑 테이블로 흡수하는 범위**를 최대화하는 것이 이 단계 변화 대응의 핵심이다. 코드 밖 설정으로 둘 것: 스키마 주입 레이블(매핑 테이블에서), SHACL shapes, 별칭 사전, 블로킹 키·임계값, 문서 유형 → 추출 경로(규칙/LLM) 라우팅, 추출 대상 유형 목록, 인덱싱 방식 파라미터. 포트·어댑터 뒤에 둘 외부 의존: 추출 LLM, 해소 판정 모델(결정 모델 포함, [09](09-ai-inside-the-pipeline.md)), NLI 검증기, 그래프 저장소. 시점 재현성: 트리플에 `extractor_version` + 온톨로지 버전 + 근거 문장 ID가 있어야 "그때 그 경로"를 재구성한다.
 
+### 관측성 — 이 단계에서 무엇을 기록·측정·알림하는가
+
+운영 안정성 표의 "탐지 신호"가 **실제로 어디서 나오는지**를 설계한다. 기준은 [Part 1/07 관측성 설계 요소](../01-foundations/07-operations-vocabulary.md)와 [Part 5/03](../05-cross-cutting/03-observability-tracing.md). 그래프 구축은 Part 2에서 **추출 LLM 비용이 가장 큰 단계**이자 **게이트가 가장 두꺼운 단계**라, 관측의 두 축은 비용(`gen_ai.usage.*`를 문서 유형·모델 티어별로)과 게이트 판정 분포(어느 단계에서 무엇이 막혔나)다. 스팬은 문서 트레이스(`ingest.fetch` 루트)의 자식이며, `kg.extract → kg.validate → kg.resolve → kg.load` 순서가 트레이스에서 그대로 보여야 한다.
+
+| 기록 대상 | 스팬 / 이벤트 (이름, 부모) | 핵심 속성 (버전 키 포함) | 지표 (→ 어느 SLI) | 샘플링 · 보존 · PII |
+|---|---|---|---|---|
+| 트리플 추출 | `kg.extract` (부모 `ingest.fetch`), 모델 호출은 자식 `kg.extract.call`(`gen_ai.*` 매핑) | `doc_id`, `chunk_id`, `tenant_id`, `agent.extractor_version`, `agent.prompt_version`, `agent.ontology_version`(주입 스키마 부분집합 ID 포함), `agent.pipeline_version`, `agent.extract_path`(rule / llm / small_model), `agent.candidate_count`, `agent.cache_hit`, `agent.retry_count`, `gen_ai.usage.input_tokens / output_tokens`, `agent.cost_estimate`, `agent.queue_wait_ms` | `kg.extract.errors` 비율, `kg.queue.depth`·`kg.queue_wait_ms` → "추출 큐 적체·호출 오류율", `kg.extract.cost_per_1k_chunks{doc_type,model}` → 대시보드 ③ | 메타 전수. 청크 본문·추출 결과 본문은 opt-in 참조만. 실패·버킷 건은 참조 100% |
+| 적재 게이트 | `kg.validate` (부모 `kg.extract`), 정합성 판정은 자식 `kg.validate.nli`(`gen_ai.*` 또는 결정 모델 속성) | `agent.shacl_version`, `agent.ontology_version`, `agent.gate_stage_failed`(align / shacl / evidence / grounding), `agent.violation_codes[]`, `agent.grounding_score`(분포 보존), `agent.grounding_method`(nli / decision_model), `agent.triple_count{candidate,passed,bucketed,downgraded}`, `agent.outcome`(success / degraded / blocked) | `kg.validate.violation_ratio{code,doc_type}` → **SLI ① SHACL·근거 검증 통과율**, "위반율·위반 유형 분포", `kg.validate.grounding_fail_ratio{predicate}` → "근거-트리플 정합성 불합격률", `kg.validate.evidence_missing` (0 목표) → **SLI ④ 근거 ID 보유 비율** | 전수. 버킷 사유 100% |
+| 엔티티 해소 | `kg.resolve` (부모 `kg.validate`) | `agent.blocking_key`, `agent.resolve.method`(dict / embedding / decision_model / llm — 1/07 `agent.decision_source`와 동일 어휘), `agent.resolve.confidence`, `agent.threshold`, `agent.sameas_links_added`, `agent.aliases_per_node_max`, `agent.resolver_version` | `kg.resolve.aliases_per_node` 히스토그램(이상치) → "노드당 별칭 수 이상치", `kg.resolve.confidence` 히스토그램, `kg.resolve.candidate_pairs`(블로킹 효과) | 전수. 인명 엔티티 라벨은 `agent.pii_masked` 표시 후 해시 |
+| 그래프 쓰기 | `kg.load` (부모 `kg.resolve`) | `agent.store_version`, `agent.edges_deleted / inserted`(문서 단위 삭제 → 재적재), `agent.outcome`, `agent.degradation[]`(`graph_lag`) | `kg.load.errors`, `kg.store.p95_ms` → "저장소 가용성·p95", `kg.lag_ms`(문서 변경 → 적재 완료) → **SLI ③ 그래프 신선도 지연 p95**, `kg.path_skew_ms` = `kg.lag_ms` − 04 `index.lag_ms` → "경로별 신선도 지연 차" | 전수 |
+| 샘플 검수·골든셋 | `kg.audit` 배치 이벤트 (부모 없음, 대상 트리플의 문서 트레이스에 링크) | `agent.sample_size`, `agent.precision`, `agent.overmerge_count`, `agent.hallucinated_count`, `agent.extractor_version`·`agent.ontology_version`(버전별 비교) | `kg.audit.precision{extractor_version}` → **SLI ② 추출 정밀도**, `kg.audit.overmerge_ratio` → "샘플 감사 오류율(과병합)" | 월 1회 200건(예시). 보존 1년 |
+| 검색 측 속성 제공 | Part 3 `retrieval.search`에 붙는 속성 | `agent.retrieval_mode`(hybrid / vector_only), `agent.graph_lag`(bool), `agent.degradation[]`(`graph_unavailable`, `graph_stale`), `agent.graph_circuit_state` | 그래프 경로 사용 비율·타임아웃율 → "경로 질의 타임아웃", 킬 스위치 진입 시각 | Part 3 정책 |
+
+"하류 검증기 실패율"은 [08](08-grounding-data-design.md)·Part 3/04 지표를 `evidence_type=triple`로 분해해 읽는다.
+
+| 알림 | 조건 (예시) | 심각도 | 런북 (첫 3단계) |
+|---|---|---|---|
+| 그래프가 새 문서를 모름 (장애 모드: 추출 LLM 다운·적체) | `kg.queue_wait_ms` p95 > 그래프 신선도 SLO의 50%(12h), 또는 `kg.extract.errors` > 10%가 30분 지속 | P3 (SLO 초과 임박 시 P2) | ① 벤더 상태·레이트 리밋·`retry_count` 분포 확인 ② Part 3에 `graph_stale` 저하가 전달되는지 확인 ③ 티어 하향(소형 모델 + 검증기) 또는 추출 대상 유형 축소 결정 |
+| 멀티홉 답변 실패 (장애 모드: 그래프 저장소 다운·지연) | `kg.store.p95_ms` > SLO 3배 5분, 또는 그래프 경로 킬 스위치 진입 30분 지속 | P2 | ① 저장소 상태·메모리 확인 ② `retrieval_mode=vector_only` 비율로 벡터 단독 저하가 작동 중인지 확인 ③ 저장소 복구 또는 복제본 전환, 적재 큐 보존 확인 |
+| 적재 정체·미분류 급증 (장애 모드: SHACL·근거 위반 폭증) | `kg.validate.violation_ratio` 7일 베이스라인 대비 +5%p 1시간 지속 | P2 | ① `violation_codes` 상위 코드와 `gate_stage_failed` 분포 확인 ② 급변 시점과 `prompt_version`·`extractor_version`·`ontology_version`·`shacl_version` 변경 이력 대조(벤더 묵시 업데이트 의심 시 버전 고정 확인) ③ 임계 초과 유형 추출 일시 중단, 원인 롤백 |
+| 두 경로 답이 다름 (장애 모드: 그래프 ↔ 벡터 불일치) | `kg.path_skew_ms` > 1시간 지속, 또는 문서별 `pipeline_version` 불일치 수 > 0 | P3 | ① 단일 변경 큐([07](07-freshness-and-sync.md)) 소비자별 지연 비교 ② 불일치 문서 재처리 큐 투입 ③ 지연 차 원인(추출 처리량 vs 임베딩)에 따라 워커 조정 |
+| 틀린 경로·환각 관계 (장애 모드: 엔티티 과병합 · 환각 관계 유입) | `kg.audit.precision` < 85%, `kg.resolve.aliases_per_node` p99 > 베이스라인 2배, 또는 `grounding_fail_ratio{predicate}`가 특정 관계에서 > 20% | P3 | ① 과병합 노드의 `sameAs` 링크 해제(가역) 후 유래 경로 재계산 ② 집중된 `predicate`의 프롬프트·스키마 정의 확인 ③ 해소 확신도 임계 하향 또는 블로킹 키 재설계 |
+
+대시보드에서 이 단계를 보는 뷰: ② Knowledge 패널 — 게이트 판정 깔때기(후보 → 통과 → 버킷, 단계별), 위반율(코드별), 그래프 신선도 지연과 벡터 지연의 차, 해소 확신도 히스토그램 / ③ 비용 패널 — **추출 LLM 비용**(문서 유형 × 모델 티어, 1천 청크당), 캐시 적중률, 정합성 판정(NLI) 비용 / 감사 추적으로 넘기는 필드(관측 로그와 분리): 거버넌스 접점 표의 트리플별 버전 4종·근거 문장 ID·정합성 판정값·해소 결정·버킷 사유·재추출 실행 이력 — 관측 스팬은 집계용 분포만 갖고 트리플 단위 레코드는 감사 저장소에 / 이 단계의 관측이 없으면 못 보는 장애: **적재 게이트를 통과한 트리플이 원문에 없는 관계인 경우** — SHACL 통과율은 100%로 보이고 오류도 없으므로, `agent.grounding_score` 분포와 `grounding_fail_ratio{predicate}`를 기록하지 않으면 환각 관계가 조용히 쌓여 멀티홉 답변에 인용된다.
+
 ### 거버넌스 접점 — 정책 · 가드레일 · 승인 · 감사
 
 | 항목 | 이 단계에서의 답 |
@@ -239,6 +264,8 @@ SLI 후보: ① SHACL·근거 검증 통과율 ② 추출 정밀도(월 1회 샘
 - [ ] 온톨로지 개명·병합이 매핑 테이블로 재추출 없이 처리되는 범위가 정의되어 있는가
 - [ ] 추출·해소 모델 교체가 포트 뒤 어댑터 교체 + 섀도 비교로 가능한가
 - [ ] 전체 재추출이 배치 창·파티션·티어 하향 결정 규칙과 함께 승인 게이트를 거치는가
+- [ ] 운영 안정성 표의 탐지 신호마다 원천 스팬·지표(`kg.validate.violation_ratio{code}`, `kg.validate.grounding_fail_ratio{predicate}`, `kg.resolve.aliases_per_node`, `kg.path_skew_ms`, `kg.audit.precision`)가 있고 추출기·프롬프트·온톨로지·SHACL 버전 4종으로 분해되는가
+- [ ] 알림마다 런북이 있고, 추출 LLM 비용이 문서 유형 × 모델 티어로 대시보드 ③에 나타나는가
 
 ## 최신 트렌드 적용 (최근 1년)
 

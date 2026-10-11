@@ -207,6 +207,31 @@ SLI 후보: ① 골든셋 recall@k(dense·hybrid 각각) ② 검색 p95 지연 �
 
 가장 자주 바뀌는 것: **지식**(증분 upsert) — 비용 없이 흡수. 설계가 좌우하는 것은 **임베딩 모델 교체**다. 벤더 가격·한도 변경, 한국어 품질 개선 모델 등장이 교체를 유발하며, `embed()` 포트 뒤 어댑터 + 인덱스 버전 병행 + 별칭 전환이 없으면 교체가 수개월 프로젝트가 된다. 코드 밖 설정으로 둘 것: 모델 ID·버전·차원·접두 규칙, 인덱스 파라미터, 양자화 수준, RRF 설정, 분석기·사전, 필터 필드 목록, 배치·동시성 상한, 컬렉션별 허용 모델. 포트·어댑터 뒤에 둘 외부 의존: 임베딩 API, 벡터DB, 검색엔진, 리랭커(Part 3). 시점 재현성: 모든 벡터에 `embedding_model` + 인덱스 버전 별칭 이력이 있어야 "그때 어느 인덱스가 서빙했나"를 복원한다.
 
+### 관측성 — 이 단계에서 무엇을 기록·측정·알림하는가
+
+운영 안정성 표의 "탐지 신호"가 **실제로 어디서 나오는지**를 설계한다. 기준은 [Part 1/07 관측성 설계 요소](../01-foundations/07-operations-vocabulary.md)와 [Part 5/03](../05-cross-cutting/03-observability-tracing.md). 이 단계는 두 트레이스에 걸친다 — **색인 측**은 문서 단위 트레이스(`index.embed` → `index.upsert`), **검색 측**은 Part 3이 소유하는 `retrieval.search` 스팬이다. 검색 측에서 이 단계가 하는 일은 스팬을 만드는 것이 아니라 **속성을 제공**하는 것(`agent.index_version`, `agent.embedding_model`, `agent.retrieval_mode`)이며, Part 3 지표를 그 속성으로 분해해 읽는다.
+
+| 기록 대상 | 스팬 / 이벤트 (이름, 부모) | 핵심 속성 (버전 키 포함) | 지표 (→ 어느 SLI) | 샘플링 · 보존 · PII |
+|---|---|---|---|---|
+| 임베딩 호출 (색인) | `index.embed` (부모: 문서 트레이스 `ingest.fetch`), 배치 호출은 자식 `index.embed.call`(`gen_ai.*` 매핑) | `doc_id`, `tenant_id`, `agent.embedding_model`(이름·버전·차원 — 임베딩 버전 키), `agent.embedding.prefix_version`(접두 규칙), `agent.chunk_version`, `agent.pipeline_version`, `agent.batch_size`, `agent.rate_limited`(bool), `agent.retry_count`, `gen_ai.usage.input_tokens`, `agent.cost_estimate`, `agent.queue_wait_ms` | `index.embed.errors{code}` 비율 → "호출 오류율", `index.queue.depth` 게이지 → "색인 큐 적체", `index.embed.tokens{model}` → 대시보드 ③ | 메타 전수. 청크 본문·벡터 값은 기록 금지(청크 ID만). 실패 배치 100% |
+| 인덱스 쓰기 | `index.upsert` (부모 `index.embed`) | `agent.index_version`(컬렉션·별칭), `agent.collection_allowed_model`, `agent.upserted_count`, `agent.rejected_count`, `agent.reject_reason`(`model_mismatch` / `chunk_version_mismatch`), `agent.outcome` | `index.upsert.rejected{reason}` 카운터 → "쓰기 거부 로그", `index.collection.embedding_model_distinct` 게이지 → **SLI ④ 모델 일관성**(= 1), `index.lag_ms`(`index.chunk` 시작 → `index.upsert` 완료) → **SLI ③ 색인 지연** | 전수. 거부 건 100% |
+| 저장소 상태 | `index.store.health` 주기 이벤트 (부모 없음) | `agent.store_version`, `agent.memory_pressure`, `agent.segment_count`, `agent.tombstone_ratio`, `agent.ann_params{ef,nprobe}` 현재값 | `index.store.p95_ms` → "저장소 p95", `index.store.memory_pressure` → "메모리 압박", `index.tombstone_ratio`·`index.segment_count` → "HNSW 삭제 누적" | 1분 주기(예시). 보존 30일 |
+| 설정 정합성 검사 | `index.config.check` 주기 이벤트 (부모 없음) | `agent.index_config_hash`(색인 측 모델·접두), `agent.query_config_hash`(질의 측), `agent.drift`(bool) | `index.config.drift` 게이지(0/1) → "접두 설정 diff" (신규 원천 — 기존 표는 recall 급락으로만 탐지) | 배포 직후 + 10분 주기(예시) |
+| 골든셋 평가 | `index.eval` 배치 이벤트 (부모 없음, 전환 시 `sync.switch`에 링크) | `agent.index_version{candidate,baseline}`, `agent.eval_set_version`, `agent.recall_at_k{dense,hybrid}`, `agent.lang_subset`(한국어·혼합) | `index.eval.recall_at_k{mode,lang}` → **SLI ① recall@k**, 탐지 신호 "골든셋 recall 주기 측정·변경 직후 측정" | 일 1회(예시) + 파라미터·양자화 변경 직후. 보존 1년(회귀 추적) |
+| 검색 측 속성 제공 | Part 3 `retrieval.search`에 붙는 속성 (이 단계 소유 아님) | `agent.index_version`, `agent.embedding_model`, `agent.retrieval_mode`(hybrid / keyword_only / vector_only), `agent.ann_params_lowered`(bool), `agent.query_embed_cache_hit`, `agent.degradation[]`(`retrieval_keyword_only`) | Part 3 지표 `retrieval.search.duration_ms`를 `agent.index_version`으로 분해 → **SLI ② 검색 p95**, `retrieval.query_embed.errors` → "질의 임베딩 실패율", `retrieval_mode` 분포 → 저하 비율 | Part 3 정책을 따름 |
+
+OTel 매핑: `index.embed.call`은 `gen_ai.operation.name=embeddings`에 대응하지만 컨벤션이 Development 등급이므로 자체 속성(`agent.embedding_model`, `agent.embedding.prefix_version`)을 1차로 두고 매핑 테이블에서 변환한다([Part 5/03](../05-cross-cutting/03-observability-tracing.md)). 접두 규칙 버전은 OTel 쪽에 대응 속성이 없어 자체 속성으로만 남는다.
+
+| 알림 | 조건 (예시) | 심각도 | 런북 (첫 3단계) |
+|---|---|---|---|
+| 의미 검색 불가 (장애 모드: 임베딩 API 다운) | `index.embed.errors` > 5%가 5분 지속, 또는 `retrieval_mode=keyword_only` 비율 > 50%가 5분 | P2 (10분 초과 P1) | ① 벤더 상태·레이트 리밋 응답 비율 확인 ② 색인 큐가 보존(백프레셔) 중이고 `degradation[]=retrieval_keyword_only`가 계약 ②로 전달되는지 확인 ③ 같은 모델의 자체 호스팅 폴백이 있으면 전환, 없으면 온콜 |
+| 검색 지연 (장애 모드: 벡터DB 지연 급증) | `retrieval.search.duration_ms{index_version}` p95 > 600ms(SLO 2배)가 5분 지속 | P1 | ① `index.store.p95_ms`·`memory_pressure`로 저장소 원인 확인 ② 서킷 브레이커 → `ef`/`nprobe` 하향·k 축소가 작동했는지(`ann_params_lowered` 비율) 확인 ③ 복제본 확장 또는 BM25 단독 전환 |
+| 조용한 품질 하락 (장애 모드: recall 회귀) | `index.eval.recall_at_k` 베이스라인 대비 −2%p (일 1회 평가), 또는 전환 게이트 차단 발생 | P2 | ① 최근 24시간 내 모델·파라미터·양자화·`chunk_version` 변경 이력 대조 ② 한국어·혼합 하위셋 분해로 범위 확인 ③ 전환 중이면 별칭 롤백([07](07-freshness-and-sync.md)), 운영 중이면 변경 되돌리기 |
+| 설정 불일치 (장애 모드: 임베딩 모델 혼재 · 접두 불일치) | `index.upsert.rejected{reason=model_mismatch}` ≥ 1, `embedding_model_distinct` > 1, 또는 `index.config.drift`=1 | P1 | ① 색인·질의 설정 파일 해시 diff로 분리 지점 식별 ② 파이프라인 쓰기 일시 중단 ③ 혼입 벡터 범위 식별 후 삭제·재임베딩 |
+| 서서히 악화 (장애 모드: HNSW 삭제 누적) | `index.tombstone_ratio` > 20%, 또는 `segment_count`가 7일 베이스라인 2배 | P3 | ① 다음 배치 창에 compaction 예약 ② compaction 소요 추정이 창을 넘으면 파티션 분할 검토 ③ 삭제 비율 높은 컬렉션의 변경률 원인 확인([07](07-freshness-and-sync.md)) |
+
+대시보드에서 이 단계를 보는 뷰: ② Knowledge 패널 — recall@k 추이(인덱스 버전별), 색인 지연 p95, 색인 큐 깊이, 모델 일관성(컬렉션별 distinct=1), 톰스톤 비율; 검색 p95·`retrieval_mode` 분포는 Retrieval 패널에서 `agent.index_version`으로 분해 / ③ 비용 패널 — 임베딩 토큰 비용(모델별, 색인 vs 질의), 질의 임베딩 캐시 적중률 / 감사 추적으로 넘기는 필드(관측 로그와 분리): 벡터별 `embedding_model`·`embedded_at`, 별칭 전환 이력(시각·평가 결과·승인자), 파라미터·양자화 설정 버전, 저하 모드 진입·해제 시각 — 전환 이력은 `sync.switch` 이벤트에서 감사 저장소로 복사 / 이 단계의 관측이 없으면 못 보는 장애: **질의 측과 색인 측의 임베딩 접두(instruction)가 달라 recall이 전반적으로 낮아진 상태** — 오류도 지연도 없고 두 설정이 각자 "정상"이라, `index.config.drift`나 일 1회 골든셋 평가가 없으면 사용자 불만으로만 드러난다.
+
 ### 거버넌스 접점 — 정책 · 가드레일 · 승인 · 감사
 
 | 항목 | 이 단계에서의 답 |
@@ -228,6 +253,8 @@ SLI 후보: ① 골든셋 recall@k(dense·hybrid 각각) ② 검색 p95 지연 �
 - [ ] upsert가 `(chunk_id, embedding_model)` 키로 멱등하고 배치 재시도 상한이 있는가
 - [ ] HNSW 톰스톤 비율 알림과 compaction 배치 창이 있는가
 - [ ] 임베딩 API 비용 상한·레이트 리밋·백오프가 설정으로 있는가
+- [ ] 운영 안정성 표의 탐지 신호마다 원천 스팬·지표(`index.embed.errors`, `index.eval.recall_at_k`, `index.upsert.rejected{reason}`, `index.config.drift`, `index.tombstone_ratio`)가 있고, 검색 측 지표가 `agent.index_version`으로 분해되는가
+- [ ] 알림마다 런북이 있고, 설정 불일치(모델 혼재·접두 drift)가 recall 회귀와 별도 알림으로 즉시 잡히는가
 
 ## 최신 트렌드 적용 (최근 1년)
 

@@ -232,6 +232,31 @@ SLI 후보: p95 첫 토큰 ~ 첫 컴포넌트 지연, 재개 성공률, 순서 �
 
 가장 자주 바뀌는 것: **권한·조직 규칙**(재검증 ②, 월 단위) > 프로토콜 SDK > 이벤트 스키마(거의 안 바뀜). 코드 밖 설정으로 둘 것: 권한 규칙, 동기화 정책 수치, optimistic 허용 표, `client_state_seq` 허용 창. 포트·어댑터 뒤에 둘 외부 의존: AG-UI SDK, 전송 채널, 이벤트 로그·멱등 키 저장소. 스키마 진화를 계약 ③에 적용하면: 봉투에 필드 추가 자유(서버는 모르는 필드 무시하되 **기록**), `type` enum 값 추가는 마이너(구 서버는 모르는 `type`을 거부 + 이유 코드), 필드 삭제·의미 변경은 메이저. 시점 재현: 모든 이벤트에 `catalog_version`과 재검증 규칙 버전.
 
+### 관측성 — 이 단계에서 무엇을 기록·측정·알림하는가
+
+운영 안정성의 "탐지 신호"가 **실제로 어디서 나오는지**를 설계한다. 기준은 [Part 1/07 관측성 설계 요소](../01-foundations/07-operations-vocabulary.md)와 [Part 5/03](../05-cross-cutting/03-observability-tracing.md). 이 페이지의 장애 대부분(중복 카드·순서 갭·롤백)은 **클라이언트에서만 보인다**. 서버가 trace context를 스트림 첫 이벤트에 실어 보내고, 클라이언트가 같은 `request_id`·`run_id`로 보고해야 서버 `ui.stream` 스팬 아래에 붙는다.
+
+| 기록 대상 | 스팬 / 이벤트 (이름, 부모) | 핵심 속성 (버전 키 포함) | 지표 (→ 어느 SLI) | 샘플링 · 보존 · PII |
+|---|---|---|---|---|
+| 스트림·재연결 | `ui.stream` (부모 `invoke_agent`, run 단위) + 이벤트 `ui.stream.reconnect` | `agent.run_id`, `agent.reconnect_count`, 마지막 이벤트 ID, `agent.resume_result`(cursor / snapshot / text_only), 범주별 이벤트 수, `agent.protocol_version`, 클라이언트 보고 첫 컴포넌트 ms | 재개 성공률, 재연결 횟수/run, p95 첫 토큰 ~ 첫 컴포넌트 지연 | 전수 |
+| 순서·run 정합 | 클라이언트 이벤트 `ui.stream.gap` / `ui.stream.foreign_run` (부모 `ui.stream`) | 기대 seq·수신 seq·갭 크기, 스냅샷 재요청 여부, 폐기 이벤트 수, 수신한 run ID | 순서 갭 비율, run ID 불일치 건수 | 전수 |
+| 상태 패치 · `degradation[]` 패치 | 서버 이벤트 `ui.stream.patch`(배치 단위) + 클라이언트 적용 보고 | 패치 수, 스냅샷 여부, 공유 상태 바이트, **`agent.degradation[]`가 패치로 추가·제거된 시각**과 클라이언트의 `agent.degradation_displayed` 갱신 시각 | 패치 적용 지연, 저하 코드 패치 수신 → 고지 표시 지연 | 샘플(예시 10%), `degradation[]` 패치는 전수 |
+| 이벤트 로그·멱등 키 저장소 | 자식 스팬 `tool.invoke {event_log}` / `tool.invoke {idempotency_store}` | 저장소 지연, 오류 코드, 서킷 상태 | 저장소 p95·오류율, 서킷 열림 시간(재개 불가 모드 지속) | 전수 |
+| 사용자 이벤트 재검증 | 클라이언트 `ui.event {type}` → 서버 `ui.event.verify` (부모 `turn`, 같은 `request_id`, `agent.event_id`) | `agent.event_type`, `agent.target`(컴포넌트 인스턴스 ID), 멱등 키 해시, `agent.verify_result`, `agent.reject_code`(schema / permission / state / idempotent / policy), `agent.rules_version`, `agent.catalog_version`, `client_state_seq` 차, 재검증 ①~⑤ 각 소요 | 재검증 거부율(이유별), 재검증 지연 p95, 멱등 중복 히트율, 이벤트 재전송·중복률 | **전수**. `payload`는 감사 레코드로, 관측 스팬엔 해시·코드만 |
+| optimistic 롤백 | 클라이언트 이벤트 `ui.event.rollback` (부모 `ui.event`) | `agent.rollback_reason`(= 서버 `reject_code`), optimistic 표시 지속 ms | optimistic 롤백률 | 전수 |
+
+| 알림 | 조건 (예시) | 심각도 | 런북 (첫 3단계) |
+|---|---|---|---|
+| 재개 실패 | 재개 성공률 < 예시 99%, 10분 | P2 | ① `resume_result` 분포 ② 이벤트 로그 저장소 지연·서킷 ③ 프록시 idle 설정 |
+| 순서 갭 급증 | 갭 비율 > 예시 0.5%, 5분 | P2 | ① 서버 발행 측 seq 로그 대조 ② 배포 마커 ③ 스냅샷 재요청 비율로 자동 복구 확인 |
+| 재검증 거부 급변 | 이유 코드 하나가 기준선 3배, 10분 | permission 급증 **P1** / 그 외 P2 | ① 이유 코드 × `rules_version` 분해 ② schema면 카탈로그 불일치, permission이면 권한 모델 변경 누락 ③ 프론트 재로드 안내 또는 규칙 롤백 |
+| 멱등 키 저장소 장애 | 저장소 오류율 > 0, 1분 또는 fail-closed 거부 발생 | **P1** | ① 거부(실행 0건) 확인 ② 저장소 복구 ③ 거부된 이벤트 사용자 안내 |
+| optimistic 롤백 폭증 | 롤백률 > 예시 5%, 15분 | P3 | ① `rollback_reason` 분해 ② 재검증 규칙 변경 이력 ③ optimistic 비활성 플래그 |
+
+**대시보드에서 이 단계를 보는 뷰**: ① E2E의 첫 컴포넌트 지연·과업 완료 / ② Interaction 패널의 "재개·순서 갭·재검증 거부(이유별)·롤백".
+**감사 추적으로 넘기는 필드(관측 로그와 분리)**: 사용자 이벤트 전문, 인증 컨텍스트의 실제 사용자, 재검증 ①~⑤ 결과·이유 코드·규칙 버전, 수락 시 상태 전이 — 샘플링 불가. 관측 스팬에는 해시와 코드만 남긴다.
+**이 단계의 관측이 없으면 못 보는 장애**: 중복 카드와 순서 갭. 서버 지표는 전부 정상이고, `ui.stream.gap` 보고가 없으면 "UI가 가끔 깨진다"는 불만만 남는다.
+
 ### 거버넌스 접점 — 정책 · 가드레일 · 승인 · 감사
 
 | 항목 | 이 단계에서의 답 |
@@ -252,6 +277,8 @@ SLI 후보: p95 첫 토큰 ~ 첫 컴포넌트 지연, 재개 성공률, 순서 �
 - [ ] 권한 규칙이 코드 밖에 있어 조직 개편을 배포 없이 반영하는가
 - [ ] 사용자 이벤트와 재검증 결과가 샘플링 없이 감사 저장소에 남는가
 - [ ] p95 첫 컴포넌트 지연·재개 성공률 SLO와 런북이 있는가
+- [ ] 순서 갭·run ID 불일치·optimistic 롤백이 클라이언트 이벤트로 보고되어 서버 `ui.stream` 스팬에 연결되는가
+- [ ] `ui.event.verify`가 거부 이유 코드·규칙 버전을 속성으로 남기고 `payload`는 해시만 두는가
 
 ## 최신 트렌드 적용 (최근 1년)
 

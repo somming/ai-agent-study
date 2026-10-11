@@ -213,6 +213,32 @@ SLI 후보: 단일 에이전트 기준선 대비 성공률·비용·지연 비�
 
 가장 자주 바뀌는 것: 에이전트 역할 정의·프롬프트(역할 추가·책임 조정, 주~월) > 조정 θ·상한 > 모델 > 토폴로지 > 프레임워크·프로토콜. 코드 밖 설정으로 둘 것: 역할 정의표, 토폴로지 선언, 위임 허용 매트릭스, 상한, 조정 θ, 에이전트별 모델 배정, Agent Card, 승인 매트릭스. 포트·어댑터 뒤에 둘 외부 의존: 모델 API(에이전트별), 결정 모델, 툴/MCP, 상태 저장소·메시지 브로커, 원격 A2A 에이전트, 프레임워크 런타임.
 
+### 관측성 — 이 단계에서 무엇을 기록·측정·알림하는가
+
+운영 안정성의 "탐지 신호"가 **실제로 어디서 나오는지**를 설계한다. 기준은 [Part 1/07 관측성 설계 요소](../01-foundations/07-operations-vocabulary.md)와 [Part 5/03](../05-cross-cutting/03-observability-tracing.md). 멀티 에이전트는 분산 시스템이므로 관측의 전제는 **상관 전파**다 — `turn` 아래 `invoke_agent supervisor`, 그 아래 `agent.delegate {from→to}` / `agent.handoff {from→to}`, 그 아래 워커의 `invoke_agent {worker}`(내부는 [06](06-agent-design-patterns.md) 규약)가 한 트레이스로 이어져야 하고, 원격 A2A는 상대 trace를 **링크**로 잇는다. 상관이 끊긴 스팬은 그 자체가 장애 신호다.
+
+| 기록 대상 | 스팬 / 이벤트 (이름, 부모) | 핵심 속성 (버전 키 포함) | 지표 (→ 어느 SLI) | 샘플링 · 보존 · PII |
+|---|---|---|---|---|
+| 루트·상관 | `invoke_agent supervisor` (부모 `turn`) — 턴 종료 시 집계 | `agent.topology_version`, `agent.correlation_id`(= trace_id, 모든 하위 스팬·메시지 헤더에 전파), `agent.agent_count`, `agent.total_llm_calls`, `agent.coordination_calls`(Supervisor 자신의 호출), `agent.delegation_depth_max`, `agent.outcome`, `agent.degradation[]`=`single_agent_fallback`·`worker_omitted`·`remote_unavailable`, 버전 키 5종 | **총 LLM 호출 수 분포**, 조정 호출 비중, **위임 깊이 분포**, **E2E p95**, **단일 에이전트 기준선 대비 성공률·비용·지연 비율**(같은 골든셋, 비교 패널), **상관 ID 없는 스팬 비율**(수집기에서 `parent_span_id`·`correlation_id` 누락 카운트) → 트레이스 상관 유실 | 메타 전수 |
+| 위임 | `agent.delegate {from→to}` (부모 `invoke_agent supervisor`) → 하위 `invoke_agent {worker}` | `agent.decision`(대상 에이전트), `agent.confidence`, `agent.decision_source`, `agent.delegation_depth`, `agent.pair_count`(같은 from→to 쌍 반복 횟수), `agent.limit_hit`(depth/calls/cycle), `agent.rules_version`(위임 허용 매트릭스), 차단 사유(not_allowed/privilege_escalation) | 위임 판정 분포·확신도 히스토그램, 순환 감지율(`pair_count` ≥ N, 예시 3), **상한 도달률**, 위임 차단률(권한 상승 시도 포함) → 순환 위임 | **전수**(샘플링 금지) |
+| 워커 실행 | `invoke_agent {worker}` (부모 `agent.delegate`) | `agent.agent_id`, `agent.role_version`, 에이전트별 `agent.model_version`·`agent.prompt_version`, `agent.outcome`, `agent.retry_count`, `agent.omitted`(생략 저하), `agent.circuit_state` | 에이전트별 RED(오류율·p95·타임아웃), **워커 오류율**, 워커 생략률, 에이전트별 폴백률 → 모델 다운(에이전트별), 워커 실패·타임아웃 | 메타 전수, 워커 결과 요약은 스키마 필드만 |
+| 핸드오프 | `agent.handoff {from→to}` 이벤트 쌍(요청·수락) (부모 `invoke_agent supervisor` 또는 원 에이전트) | `agent.message_id`, 페이로드 스키마 버전·`agent.payload_hash`·크기, 스키마 검증 결과, `agent.payload_scan`(인젝션 검사 결과), `agent.handoff_result`(ok/target_missing/schema_fail/returned_to_origin) | **핸드오프 실패율**(사유별), 원 에이전트 복귀 비율, 페이로드 크기 분포 → 핸드오프 실패 | 메타·검사 결과 전수, 페이로드 본문 opt-in(마스킹), 실패 건 전수 |
+| 공유 상태 | 이벤트 `state.read` / `state.write` (부모 해당 에이전트 스팬) | `agent.state_version`, `agent.writer_agent_id`(단일 작성자 검증), `agent.conflict`(낙관적 잠금 실패), 재시도·Supervisor 중재 여부, `agent.checkpoint_id` | **상태 충돌률**, 재시도·중재 비율, 작성자 분포(단일 작성자 위반 건수), 상태 저장소·브로커 RED → 동시 갱신 충돌 | 전수, 상태 본문은 저장소에만 |
+| 종합 | `agent.synthesize` (부모 `invoke_agent supervisor`) + 모델 호출 자식(`gen_ai.*`) | 워커 결과 수·누락 수, `agent.conflict_check`(pass/fail), 재위임 여부, `agent.evidence_ids[]`(워커별 근거 합집합), 이후 [04](04-generation-grounding.md) 검증 스팬으로 연결 | 충돌 검사 불합격률, 누락 포함 종합 비율, 재위임률 → 워커 결과 모순 | 메타 전수, 불합격 건 본문 전수 |
+| 원격 A2A | `agent.delegate remote {agent}` (span kind CLIENT) + 상대 trace 링크, 비동기 완료는 결과 수신 시 링크 | 상대 에이전트 ID·Agent Card 버전, `agent.remote_task_id`, 타임아웃·`agent.circuit_state`, 인증 결과 | 원격별 오류율·p95·타임아웃, 원격 서킷 열림 건수, 비동기 완료 지연 → 원격 다운·지연 | 메타 전수, 응답은 요약 스키마만 |
+
+| 알림 | 조건 (예시) | 심각도 | 런북 (첫 3단계) |
+|---|---|---|---|
+| 에이전트 장애·폴백 | 특정 에이전트 폴백률 10분간 50% 초과, 또는 워커 오류율 10% 초과 | P1 | ① 어느 에이전트·모델인지 에이전트별 RED로 확인 ② 생략된 워커가 필수 역할인지 확인, 필수면 **단일 에이전트 폴백 플래그** 활성화 ③ 누락 표시가 종합·사용자 고지에 반영되는지 확인 |
+| 순환·상한 도달 | `agent.limit_hit` 비율 3% 초과, 또는 `pair_count` ≥ 3 비율 급증 | P2 | ① 상위 반복 쌍(from→to)과 위임 확신도 확인 ② 위임 질문 정의·토폴로지·역할 정의의 최근 버전 변경 확인 ③ 깊이·총 호출 상한 하향, 사람 인계 큐 적체 확인 |
+| 핸드오프 실패 | 핸드오프 실패율 2% 초과 | P2 | ① 사유 분포 — target_missing(레지스트리 불일치) vs schema_fail(스키마 버전 불일치) ② 역할 레지스트리·페이로드 스키마 버전을 에이전트별로 대조 ③ 원 에이전트 복귀와 사용자 재확인이 동작하는지 확인 |
+| 상태 충돌·종합 모순 | 상태 충돌률 1% 초과, 또는 충돌 검사 불합격률 급증 | P2 | ① 작성자 분포에서 단일 작성자 위반 확인 ② 상태 스키마 버전·낙관적 잠금 재시도 설정 확인 ③ Supervisor 중재·재위임 비율과 [04](04-generation-grounding.md) 검증기 거부율 교차 확인 |
+| 상관 유실·원격 장애 | 상관 ID 없는 스팬 1건 이상, 또는 원격 A2A 서킷 열림 | P2 (원격은 사업 책임자 통보 I) | ① 유실 스팬의 발생 에이전트·전파 경로(메시지 헤더·A2A 헤더) 확인 ② 컨텍스트 전파 강제가 빠진 어댑터 식별 ③ 원격이면 내부 대체 에이전트·"외부 조회 불가" 저하 발동 확인 |
+
+대시보드에서 이 단계를 보는 뷰: ① E2E — **멀티 vs 단일 기준선 비교 패널**(성공률·비용·지연 비율), 폴백·저하율 / ② Reasoning 패널 — 에이전트별 RED, 위임 깊이 분포, 핸드오프 실패율, 상태 충돌률, 트레이스 상관 유실률 / ③ 비용·판정 분포 — 조정 호출 비중(Supervisor 호출 ÷ 총 호출), 에이전트별 비용 분해, 위임 확신도 히스토그램, 결정 소스 분포.
+감사 추적으로 넘기는 필드(관측 로그와 분리): 상관 ID, 에이전트 ID·역할 정의 버전, 메시지 ID·핸드오프 페이로드 해시, 위임 판정·확신도·수단·깊이, 에이전트별 프롬프트·모델 버전, 툴 호출·게이트 판정·규칙 버전, 승인자·시각, 상태 버전(체크포인트 ID), 충돌 검사 결과, 근거 ID, 원격 A2A 태스크 ID — 거버넌스 접점 표와 동일.
+이 단계의 관측이 없으면 못 보는 장애: **조정 비용의 잠식** — 성공률은 단일과 같은데 Supervisor의 조정 호출이 전체의 40%(예시)로 불어 멀티 에이전트가 단일보다 비싸진 상태. 에이전트별 스팬과 단일 기준선 비교 패널 없이 총 비용만 보면 "트래픽이 늘었나 보다"로 넘어간다. 그리고 **위임을 통한 권한 상승** — 낮은 등급 에이전트가 높은 등급 에이전트에 위임해 행동이 실행되어도 각 에이전트의 게이트는 개별적으로 통과이므로, `agent.delegate`에 위임 매트릭스 판정을 남기지 않으면 트레이스 어디에도 "넘지 말아야 할 경계를 넘었다"는 기록이 없다.
+
 ### 거버넌스 접점 — 정책 · 가드레일 · 승인 · 감사
 
 | 항목 | 이 단계에서의 답 |
@@ -232,6 +258,8 @@ SLI 후보: 단일 에이전트 기준선 대비 성공률·비용·지연 비�
 - [ ] 위임 허용 매트릭스가 규칙으로 강제되어 에이전트 간 권한 상승이 불가능한가(테스트 포함)
 - [ ] 멀티 에이전트 성공률·비용·지연을 단일 기준선과 같은 평가셋으로 비교하고, 미달 시 회귀하는 기준이 있는가
 - [ ] 트레이스에 메시지 ID·위임 판정·에이전트별 버전 키가 있어 "어느 에이전트의 어느 스텝에서 틀렸나"를 재구성할 수 있는가
+- [ ] `agent.delegate`에 위임 허용 매트릭스 판정·`pair_count`·깊이가 전수 기록되어 권한 상승 시도와 순환을 트레이스에서 셀 수 있는가
+- [ ] 단일 에이전트 기준선 비교 패널(성공률·비용·지연 비율, 조정 호출 비중)이 대시보드 ①·③에 있고 회귀 기준과 연결되어 있는가
 
 ## 최신 트렌드 적용 (최근 1년)
 

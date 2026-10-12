@@ -106,6 +106,7 @@ AI Agent 시스템을 세 개의 레이어로 나누고, 각 레이어의 단계
 - [04 거버넌스와 설명가능성](05-cross-cutting/04-governance-explainability.md)
 - [05 LLMOps / AgentOps](05-cross-cutting/05-llmops-agentops.md)
 - [06 운영 설계 종합 매트릭스: 단계 × 확장성·안정성·유지보수·변화 대응·거버넌스](05-cross-cutting/06-operational-design-matrix.md)
+- [07 폐쇄망·망분리 환경에서의 설계: 배포 환경이 바꾸는 단계별 선택](05-cross-cutting/07-air-gapped-design.md)
 
 ### [Part 6. Trends — 최근 1년 심화](06-trends/00-overview.md)
 - [온톨로지 르네상스 ★](06-trends/ontology-renaissance.md)

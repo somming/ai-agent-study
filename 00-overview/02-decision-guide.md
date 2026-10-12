@@ -55,6 +55,7 @@ Part 2·3·4의 결정 매트릭스는 각각 입력 변수 9~10개를 정의한
 | V13 | **팀 역량** | 데이터 엔지니어링 / 검색엔진·PostgreSQL 운영 / RDF·온톨로지 / MLOps / 네이티브·디자인 시스템 팀 / 사용 언어(Python, Java, .NET, Go, TS) | [2/04](../02-data-pipeline/04-embedding-indexing.md), [2/06](../02-data-pipeline/06-ontology-driven-modeling.md), [2/09](../02-data-pipeline/09-ai-inside-the-pipeline.md), [3/14](../03-agent-workflow-rag/14-frameworks-landscape.md), [4/03](../04-dynamic-ui/03-component-registry-schema.md), [4/07](../04-dynamic-ui/07-frontend-integration.md) | P2, P3(언어), P4 |
 | V14 | **예산·반출 제약·벤더 종속** | 인덱싱 예산 / API 반출 허용 여부 / 온프레미스 / 벤더 종속 허용·불허 | [2/01](../02-data-pipeline/01-source-ingestion.md), [2/02](../02-data-pipeline/02-chunking-strategies.md), [2/04](../02-data-pipeline/04-embedding-indexing.md), [2/09](../02-data-pipeline/09-ai-inside-the-pipeline.md), [3/11](../03-agent-workflow-rag/11-decision-layer.md), [3/14](../03-agent-workflow-rag/14-frameworks-landscape.md), [5/02](../05-cross-cutting/02-cost-latency-model-routing.md) | P2 "예산·반출", P3 "벤더 종속" |
 | V15 | **언어** | 한국어 단일 / 한·영 혼합 / 다국어(RTL 포함) | [2/01](../02-data-pipeline/01-source-ingestion.md) OCR, [2/02](../02-data-pipeline/02-chunking-strategies.md) 토큰 기준, [2/04](../02-data-pipeline/04-embedding-indexing.md) 형태소, [2/09](../02-data-pipeline/09-ai-inside-the-pipeline.md), [3/11](../03-agent-workflow-rag/11-decision-layer.md)·[3/12](../03-agent-workflow-rag/12-guardrails-hitl.md) 결정 모델 `[실측]` 필수, [3/13](../03-agent-workflow-rag/13-evaluation-rag-agents.md) judge 정렬, [4/05](../04-dynamic-ui/05-intent-to-ui-mapping.md), [4/09](../04-dynamic-ui/09-ux-accessibility.md) i18n | P2 · P3 · P4 공통 |
+| V16 | **배포 환경** | 0 퍼블릭 / 1 프라이빗·VPC / 2 망연계 / 3 완전 폐쇄망 | 등급 2~3이면 **모든 단계의 기본값이 바뀐다** — 모델 하향(판정은 분류기·규칙, 제약 디코딩), 결정 모델 SaaS 불가, 자체 임베딩·벡터DB·관측 스택, Controlled UI 고정, CDN 0, 반입 묶음 = 롤백 단위. 상세 [5/07 폐쇄망 설계](../05-cross-cutting/07-air-gapped-design.md) | P2 · P3 · P4 · P5 전체 |
 
 상위 결정력: Part 3/99의 관찰대로 **V7 · V8 · V3 · V4 · V9 · V12** 여섯 개가 Reasoning 선택의 대부분을 정하고, Knowledge는 **V1 · V2 · V6**, Interaction은 **V10 · V11 · V8**이 정한다. 나머지는 조건 A/B를 여는 보조 변수다.
 
@@ -69,6 +70,8 @@ Part 2·3·4의 결정 매트릭스는 각각 입력 변수 9~10개를 정의한
 각 질문은 "예"와 "아니오"가 모두 **특정 페이지의 특정 기본값**으로 떨어진다. 순서대로 답하되, Q1에서 "예"(읽기만)를 고르면 Q13·Q14는 건너뛴다. HTML 시각화의 질문 번호와 동일하다.
 
 **범위 (어느 레이어가 필요한가)**
+
+> **전제 — V16 배포 환경이 등급 2~3(망연계·완전 폐쇄망)이면**, 아래 모든 질문의 리프에 [5/07 폐쇄망 설계](../05-cross-cutting/07-air-gapped-design.md)의 "단계별 선택 변경표"를 **덮어쓴다**. 특히 Q10(결정 모델)은 SaaS 불가라 답이 항상 "아니오"이고, 판정은 파인튜닝 분류기·규칙으로 간다. PoC와 운영의 등급이 다르면 PoC 결과를 신뢰하지 않는다.
 
 1. **Q1. 사용자가 결과를 읽기만 하는가?** (V10) → **예**: Knowledge + Reasoning만. Interaction은 citation 렌더([4/06](../04-dynamic-ui/06-hitl-ui-patterns.md) 일부)로 한정, 단 계약 ②·③은 미리 정의([01 레퍼런스 아키텍처](01-reference-architecture.md)) / **아니오**: 3-Layer 전체. Interaction은 Controlled 패턴([4/01](../04-dynamic-ui/01-generative-ui-spectrum.md))부터, Q13~14로
 2. **Q2. 행동(툴 실행)이 있는가?** (V9) → **예**: 결정 레이어([3/11](../03-agent-workflow-rag/11-decision-layer.md)) · 검증기([3/10](../03-agent-workflow-rag/10-neuro-symbolic-reasoning.md)) · 가드레일([3/12](../03-agent-workflow-rag/12-guardrails-hitl.md))을 경로 위에 생략 없이, 툴은 등급별 멱등·게이트([3/09](../03-agent-workflow-rag/09-tools-and-mcp.md)) / **아니오**: 입출력 가드레일 + 사후 샘플링([3/12](../03-agent-workflow-rag/12-guardrails-hitl.md)), HITL·내구 실행 불필요

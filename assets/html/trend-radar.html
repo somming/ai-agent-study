@@ -103,7 +103,7 @@
 </footer>
 
 <script>
-// ---- 데이터: md 레이더 표(T01~T28)와 1:1. 링크는 assets/html/ 기준 상대 경로 ----
+// ---- 데이터: md 레이더 표(T01~T30)와 1:1. 링크는 assets/html/ 기준 상대 경로 ----
 const BASE = "../../";
 const P = {
   "1/02": "01-foundations/02-system1-vs-system2.md",
@@ -178,6 +178,7 @@ const ITEMS = [
   { id: "T27", name: "AutoGen 신규 채택", quad: "보류", layer: "reasoning", seen: "2026", gist: "유지보수 모드 전환 → 신규 프로젝트 비권장. 99 매트릭스 \"피해야 할 조합\"", ev: "[2차]", apply: ["3/14"], deep: P["3/14"] },
   { id: "T28", name: "Agentic RAG", quad: "시험", layer: "reasoning", seen: "2025-10", gist: "검색이 에이전트 루프 \"앞\"이 아니라 \"안\"으로 — 검색도 툴이며 신뢰 경계·스키마 규칙을 따른다", ev: "[2차]", apply: ["3/01","3/09"], deep: P["3/01"] },
   { id: "T29", name: "코드 실행형 행동 공간 (CodeAct / Code Mode)", quad: "시험", layer: "reasoning", seen: "2025-09", seenLabel: "2025-09 (Cloudflare Code Mode; Anthropic 2025-11)", gist: "행동 공간을 JSON 툴 호출 1회에서 실행 가능한 코드 1블록으로. 원 논문(ICML 2024)은 기간 앞, 상용화(Anthropic·Cloudflare·MS·smolagents)는 최근 1년. 절감 수치는 [벤더]이고 소스 간 차이 큼. 행동 게이트는 샌드박스 call_tool 경계에서, 생성 코드가 감사 레코드", ev: "[검증] Wang et al. ICML 2024 · 절감 [벤더] [2차]", apply: ["3/06","3/09","3/12"], deep: P["3/06"] },
+  { id: "T30", name: "LLM Wiki (사전 컴파일형 지식 베이스)", quad: "시험", layer: "knowledge", seen: "2026-04", gist: "Karpathy 제안(X + Gist). LLM이 원문을 읽어 마크다운 위키를 컴파일·유지, 질의는 위키 참조 — 세 층(raw/wiki/schema)·연산 3종(ingest·query·lint)·compounding. \"질의 시 합성 vs 사전 컴파일\" 축. 수백 페이지 한계, RAG 대체가 아니라 소규모·누적형 보완(위키 먼저 → 원문 RAG 폴백). 위키 페이지는 LLM이 쓴 파생 근거(등급 E·F, stale). 원 gist 미확인", ev: "[2차] 해설 기반 · [검증] 2604.11243, 2604.12034", apply: ["3/01","2/08","3/08"], deep: P["3/01"] },
 ];
 
 // ---- 레이아웃 ----

@@ -24,8 +24,9 @@ first_seen: 2025-10          # 노트에 월 단위 기록 없음(벤치마크 �
 | 2026 | **LoCoMo, LongMemEval, BEAM**이 메모리 프레임워크 비교의 표준 벤치마크로 자리잡았다는 보고 — Mem0 발 | `[벤더]` |
 | 2026 | **MemTrapBench**: 메모리 프레임워크 5종 모두 **no-memory 베이스라인보다 나쁨**. 관련 기억이 이전 과업 프레임에 모델을 고착시킴 | `[2차]` |
 | 2026 | 벤더 네이티브 SDK(Claude Agent SDK, OpenAI Agents SDK, Google ADK)가 세션·메모리를 런타임 기능으로 흡수. ADK는 메모리를 컨텍스트 뷰의 한 원천으로 조립 | `[2차]` `[벤더]` |
+| 2026-04 | **LLM Wiki(사전 컴파일형 지식 베이스)** — Karpathy가 X 게시물 + GitHub Gist로 제안(며칠 만에 5,000+ 스타 보도). LLM 에이전트가 원문을 읽어 마크다운 위키를 컴파일·유지하고 질의는 위키를 참조. 세 층(raw/wiki/schema), 연산 3종(ingest·query·lint), 좋은 답을 페이지로 저장하는 compounding. **운영 지식용 메모리의 대표 구현 형태**가 생김 | `[2차]` 원 gist 미확인 · `[검증]` arXiv 2604.11243, 2604.12034 |
 
-이전에는 "메모리 = 대화 이력을 벡터 DB에 넣고 유사한 것을 꺼내기"였다. 바뀐 것은 ① 용도 분화, ② 표준 벤치마크의 등장, ③ **평가의 기준점이 "메모리 A vs 메모리 B"에서 "메모리 vs 메모리 없음"으로 이동**한 것이다. 상태·메모리의 단계별 구현은 [Part 3/08](../03-agent-workflow-rag/08-state-memory-context.md), 벤치마크의 평가 맥락은 [Part 1/06](../01-foundations/06-evaluation-observability.md)에 있다.
+이전에는 "메모리 = 대화 이력을 벡터 DB에 넣고 유사한 것을 꺼내기"였다. 바뀐 것은 ① 용도 분화, ② 표준 벤치마크의 등장, ③ **평가의 기준점이 "메모리 A vs 메모리 B"에서 "메모리 vs 메모리 없음"으로 이동**한 것, ④ 운영 지식용이 "RAG 코퍼스와 겹친다"는 추상적 경계에서 **구체적 구현 형태(사전 컴파일 위키)**를 얻은 것이다. ④로 인해 no-memory 원칙의 변형인 "위키 유무 A/B"가 생겼다. LLM Wiki의 본거지는 [Part 3/01](../03-agent-workflow-rag/01-rag-architecture-patterns.md)(질의 시 합성 vs 사전 컴파일 축)과 [Part 2/08](../02-data-pipeline/08-grounding-data-design.md)(파생 근거)이다. 상태·메모리의 단계별 구현은 [Part 3/08](../03-agent-workflow-rag/08-state-memory-context.md), 벤치마크의 평가 맥락은 [Part 1/06](../01-foundations/06-evaluation-observability.md)에 있다.
 
 ## 왜 주목받나
 
@@ -44,6 +45,7 @@ first_seen: 2025-10          # 노트에 월 단위 기록 없음(벤치마크 �
 | 생명주기 | 사용자·세션 단위. 갱신·망각 빈번 | 조직 단위. 검수·버전 관리 대상 |
 | 실패 모드 | 오래된 선호 고착, 사생활 침해 | 잘못된 절차의 영속화, 근거 데이터와의 중복 |
 | 경계 | [Part 3/08](../03-agent-workflow-rag/08-state-memory-context.md) | 사실상 RAG 코퍼스·근거 데이터와 겹침 → [Part 2/08](../02-data-pipeline/08-grounding-data-design.md) |
+| 대표 구현 (2026) | Mem0·Letta 류 추출-주입 프레임워크 `[벤더]` | **LLM Wiki(사전 컴파일형)** `[2차]` — 위키 페이지는 LLM이 쓴 **파생 근거**이므로 등급 E·F·`stale`로 원문과 분리([Part 2/08](../02-data-pipeline/08-grounding-data-design.md)), 패턴 배정은 [Part 3/01](../03-agent-workflow-rag/01-rag-architecture-patterns.md) |
 
 운영 지식용 메모리는 **근거 데이터 파이프라인과 경계가 모호**하다. "에이전트가 스스로 적어 두는 지식"이 검수 없이 쌓이면 근거 데이터의 거버넌스([Part 2/10](../02-data-pipeline/10-access-control-governance.md))를 우회하는 통로가 된다.
 
@@ -65,15 +67,19 @@ MemTrapBench의 방법론적 교훈은 한 문장이다: **메모리는 다른 �
 | 관련 기억이 모델을 이전 과업 프레임에 고착시킨다 | MemTrapBench | `[2차]` | 메커니즘 설명으로 설득력 있음. 우리 과업에서 재현 테스트 가치 높음 |
 | 벤더 SDK의 내장 메모리로 충분하다 | 각 벤더 SDK | `[벤더]` | 내장 메모리도 같은 기준(no-memory 대비)으로 평가한다. "내장"이 효과를 보장하지 않는다 |
 | 메모리가 대화용·운영지식용으로 분화했다 | 생태계 관찰 | `[2차]` | 구분으로 채택. 운영 지식용은 근거 데이터 거버넌스와 통합해 다룬다 |
+| "RAG는 죽었다" — LLM Wiki가 RAG를 대체한다 | 커뮤니티(2026-04) | `[2차]` | 기각. 인덱스 탐색은 수백 페이지가 한계이고 수백만 문서·실시간 갱신 운영 시스템을 대체하지 못한다. 우리의 위치는 **소규모·누적형 보완**(위키 먼저 → 원문 RAG 폴백 하이브리드) |
+| LLM Wiki는 "캐시 계층에 이름 붙인 것"일 뿐 | 커뮤니티 반론 | `[2차]` | 절반 동의. 결과 캐시와 다른 점은 **스키마·lint·compounding**(좋은 답이 페이지로 누적). 다만 그 누적은 환각 누적이기도 하므로 파생 등급으로 원문과 분리하고 lint 보고에 소유자를 둔다 |
+| 오픈소스 LLM Wiki 구현은 개인용 프로토타입이며 산업급 에이전트 능력이 없다 | arXiv 2604.11243 | `[검증]` | 수용. 레이더 **시험**(T30)에 두되 채택 조건은 "위키 없음(원문 RAG만)" 대비 `[실측]` |
 
 ## 이 위키의 어느 단계에 적용되나
 
 | 단계 페이지 | 역할 | 적용 조건 |
 |---|---|---|
-| [Part 3/08 상태·메모리·컨텍스트 엔지니어링](../03-agent-workflow-rag/08-state-memory-context.md) | 이 트렌드의 본거지. 메모리 계층 설계, 저장·조회·망각 정책, no-memory 비교 | 멀티세션 에이전트 |
+| [Part 3/08 상태·메모리·컨텍스트 엔지니어링](../03-agent-workflow-rag/08-state-memory-context.md) | 이 트렌드의 본거지. 메모리 계층 설계, 저장·조회·망각 정책, no-memory 비교. 비교표에 "LLM Wiki형(마크다운 + 스키마 + lint)" 행, 위키 유무 A/B | 멀티세션 에이전트, 운영 지식용 메모리 검토 시 |
+| [Part 3/01 RAG 아키텍처 패턴](../03-agent-workflow-rag/01-rag-architecture-patterns.md) | LLM Wiki의 본거지 — "질의 시 합성 vs 사전 컴파일" 축, 하이브리드(위키 먼저 → 원문 RAG 폴백 → 환류), 재컴파일 트리거·`wiki.*` 스팬 | 코퍼스 수백 페이지 이하·변화 느림·종합·반복 질문 |
 | [Part 1/06 평가·관측성](../01-foundations/06-evaluation-observability.md) | no-memory 베이스라인을 포함한 평가 설계 | 메모리 채택 검토 시 |
 | [Part 3/13 RAG·에이전트 평가](../03-agent-workflow-rag/13-evaluation-rag-agents.md) | 메모리 on/off 비교 실험 절차, 과업 프레임 고착 재현 테스트 | 메모리 채택 검토 시 |
-| [Part 2/08 근거 데이터 설계 ★](../02-data-pipeline/08-grounding-data-design.md) | 운영 지식용 메모리와 근거 데이터의 경계 | 운영 지식 메모리 검토 시 |
+| [Part 2/08 근거 데이터 설계 ★](../02-data-pipeline/08-grounding-data-design.md) | 운영 지식용 메모리와 근거 데이터의 경계. LLM 파생 페이지의 등급 E·F와 `derived_from[]`·`compiled_at`·`compiler_version`·`stale` 필드 | 운영 지식 메모리·LLM Wiki 검토 시 |
 | [Part 2/10 접근 제어·거버넌스](../02-data-pipeline/10-access-control-governance.md) | 에이전트가 적어 둔 지식의 검수·권한 | 운영 지식 메모리 채택 시 |
 | [Part 5/01 보안·프롬프트 인젝션](../05-cross-cutting/01-security-prompt-injection.md) | 메모리를 통한 인젝션 영속화(오염된 기억) | 모든 메모리 |
 
@@ -86,6 +92,7 @@ MemTrapBench의 방법론적 교훈은 한 문장이다: **메모리는 다른 �
 | **과업 프레임 고착** | 관련성 기반 조회가 구조적으로 이 문제를 만든다면, 조회 방식 자체를 바꿔야 함 | 해법 미정립 — "언제 조회하지 않나"의 설계 |
 | **망각·갱신 정책** | 오래된 선호·틀린 사실의 수정 절차 | 프레임워크마다 상이, 표준 없음 |
 | **운영 지식 메모리의 거버넌스 우회** | 검수 없는 지식 축적 | 근거 데이터 파이프라인으로 편입 외 방법 없음 |
+| **LLM Wiki의 환각 누적** | 위키에 들어간 오류가 다음 답의 근거가 되어 compounding으로 누적. 출처는 페이지 단위 | 파생 등급·`stale`·원문 치환 검증으로 분리, lint 소유자. 원 gist·1차 자료 미확인 `[2차]` |
 | **프라이버시** | 대화 메모리는 개인정보 저장소 | 보존 기간·삭제권·마스킹 설계 필요 |
 | 한국어 대화 메모리 품질 | 벤치마크가 영어 중심일 가능성 | 미확인 |
 
@@ -100,12 +107,15 @@ MemTrapBench의 방법론적 교훈은 한 문장이다: **메모리는 다른 �
 5. **거버넌스 통합**: 운영 지식용 메모리는 근거 데이터 파이프라인([Part 2/08](../02-data-pipeline/08-grounding-data-design.md))의 검수·권한을 거친다. 에이전트가 직접 쓴 지식은 검수 전까지 "미확인" 표시로 분리된다.
 6. **프라이버시 설계**: 대화 메모리의 보존 기간·삭제·마스킹이 문서화되고 구현되어 있다.
 7. **한국어 재현**: 위 1~2를 한국어 대화로 수행한다.
+8. **LLM Wiki형이면 위키 유무 A/B `[실측]`**: 같은 골든셋에서 (a) 원문 RAG만 (b) 위키 먼저 → RAG 폴백의 정답률·근거 부합률·비용과 stale·모순 페이지 적중률을 비교한다. (b)가 유의하게 낫지 않으면 위키를 유지하지 않는다.
 
 ## 참고 문헌
 
 - `[벤더]` Mem0 보고 — LoCoMo, LongMemEval, BEAM의 표준화. 벤치마크 원 논문은 노트에 미기록, 확인 후 보강
 - `[2차]` MemTrapBench — 메모리 프레임워크 5종 모두 no-memory 베이스라인보다 나쁨. 관련 기억의 과업 프레임 고착. 원문·조건 확인 필요
 - `[벤더]` Google ADK 문서 — 세션·메모리를 컨텍스트 뷰로 조립 ([context-engineering](context-engineering.md))
+- `[2차]` Karpathy LLM Wiki(2026-04, X 게시물 + GitHub Gist) 해설 — 세 층·연산 3종·compounding. **원 gist URL 미확인**. "RAG는 죽었다" vs "캐시 계층" 양분
+- `[검증]` arXiv 2604.11243 "Knowledge Compounding: … Self-Evolving Knowledge Wikis under the Agentic ROI Framework"; arXiv 2604.12034 "Memory as Metabolism"
 - `[2차]` 프레임워크 재편(Claude Agent SDK, OpenAI Agents SDK, ADK, LangGraph 체크포인팅) — 상세는 [Part 3/14](../03-agent-workflow-rag/14-frameworks-landscape.md)
 - 관련 트렌드: [context-engineering](context-engineering.md) (메모리는 컨텍스트 선택의 원천), [decision-models](decision-models.md) (조회 게이팅)
 

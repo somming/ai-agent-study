@@ -69,6 +69,10 @@ updated: 2026-10-11
 - **citation** — 답변의 각 주장을 근거 단위에 연결한 참조. 스키마는 Part 2가 정의하고 Part 4가 그대로 렌더. → [2/08](../02-data-pipeline/08-grounding-data-design.md), [4/06](../04-dynamic-ui/06-hitl-ui-patterns.md)
 - **출처 추적** (provenance) — 데이터가 어디서 어떻게 왔는지의 기록. W3C PROV. → [2/03](../02-data-pipeline/03-metadata-provenance.md)
 - **ACL-aware retrieval** — 사용자 권한을 검색 시점에 적용해 볼 수 없는 문서를 결과에서 제외. → [2/10](../02-data-pipeline/10-access-control-governance.md)
+- **LLM Wiki / 사전 컴파일형 지식 베이스** (LLM Wiki, pre-compiled knowledge base) — Karpathy가 2026-04에 제안한 **패턴**(제품 아님). LLM 에이전트가 원문(`raw/`, 불변)을 읽어 구조화·상호 링크된 마크다운 위키(`wiki/`)를 컴파일·유지하고, 스키마 파일(`CLAUDE.md`류)이 규칙을 정하며, 질의는 원문이 아니라 위키를 참조한다. 연산은 ingest·query·lint. RAG(질의 시 재합성)와 대비되는 "사전 컴파일" 축. 인덱스 탐색은 수백 페이지 한계라 이 위키는 **RAG 대체가 아니라 소규모·누적형 보완**(위키 먼저 → 원문 RAG 폴백)으로 둔다 `[2차]`. → [3/01](../03-agent-workflow-rag/01-rag-architecture-patterns.md), [2/08](../02-data-pipeline/08-grounding-data-design.md), [6/agent-memory](../06-trends/agent-memory.md)
+- **compounding (지식 누적)** — LLM Wiki의 query가 만든 좋은 답을 새 위키 페이지로 저장해 다음 질의의 근거로 쌓는 것. 사전 종합이 누적되어 질의 비용이 내려가지만, 환각도 같이 누적된다(위키에 들어간 오류가 다음 답의 근거가 됨) → 파생 등급과 lint로 통제. → [3/01](../03-agent-workflow-rag/01-rag-architecture-patterns.md)
+- **파생 근거** (derived evidence) — 1차 원문이 아니라 LLM이 생성·종합한 것(위키 페이지·요약·캡션)을 근거로 쓰는 경우. citation에 `derived_from[]`(원문 ID)·`compiled_at`·`compiler_version`·`stale`을 두고, 신뢰도 등급은 원문 A~D와 다른 축인 **E**(원문 링크 보유)·**F**(링크 없음 또는 stale — 인용 금지). 검증기는 원문으로 치환해 대조한다. → [2/08](../02-data-pipeline/08-grounding-data-design.md)
+- **lint (위키)** — LLM Wiki의 세 번째 연산. 결정론 자동 수정(인덱스 일관성·깨진 링크·원문 참조) + 휴리스틱 보고(모순·고아 페이지·오래된 내용·후보 신규 페이지). 컴파일러 비유의 "테스트"이며 Knowledge 레이어의 **탐지 통제** — 보고를 처리할 소유자가 없으면 로그에 불과하다. 스팬 `wiki.lint`. → [3/01](../03-agent-workflow-rag/01-rag-architecture-patterns.md), [1/07](../01-foundations/07-operations-vocabulary.md)
 - **faithfulness / context precision / context recall / answer relevancy** — RAGAS 류 표준 RAG 지표. 근거 부합 / 검색 정밀도 / 검색 재현율 / 답변 관련성. → [1/06](../01-foundations/06-evaluation-observability.md)
 
 ## 에이전트·워크플로우

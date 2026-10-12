@@ -120,7 +120,7 @@ session
       └─ ui.map / ui.render / ui.event           ← Interaction 레이어, 프론트에서 보고
 ```
 
-스팬 이름은 `<stage>.<operation>` 소문자, 단계 페이지의 `stage` 값과 맞춘다. Knowledge 파이프라인(배치)은 `ingest.*`, `index.*`, `sync.*` 스팬을 **문서 단위 트레이스**로 따로 둔다.
+스팬 이름은 `<stage>.<operation>` 소문자, 단계 페이지의 `stage` 값과 맞춘다. Knowledge 파이프라인(배치)은 `ingest.*`, `index.*`, `sync.*` 스팬을 **문서 단위 트레이스**로 따로 둔다. 사전 컴파일형 지식 베이스(LLM Wiki)를 쓰면 `wiki.ingest`(원문 → 페이지 컴파일) · `wiki.query`(인덱스 탐색, 원문 RAG 폴백 여부 속성) · `wiki.lint`(모순·고아·stale 보고)를 추가하고, 위키 페이지를 근거로 쓴 답변에는 `agent.evidence_derived=true`와 `derived_from[]`을 남긴다.
 
 **② 공통 속성** — 모든 스팬이 가져야 하는 최소 집합. 자체 속성은 `agent.*` 네임스페이스에 두고, OTel GenAI 속성(`gen_ai.*`)은 매핑 계층을 거쳐 붙인다(컨벤션이 Development 등급이라 이름이 바뀔 수 있음).
 

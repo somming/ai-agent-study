@@ -47,16 +47,17 @@
 <body>
 <header>
   <h1>RAG 아키텍처 패턴 진화 — Naive → Advanced → Modular → Agentic, 그리고 GraphRAG 분기</h1>
-  <p>각 열은 하나의 패턴, 열 안의 상자는 구성 요소입니다. 파란 테두리는 <b>이전 단계에 없던 새 구성 요소</b>. 상자를 클릭하면 해당 요소를 설명하는 위키 페이지로 이동합니다.</p>
+  <p>각 열은 하나의 패턴, 열 안의 상자는 구성 요소입니다. 파란 테두리는 <b>이전 단계에 없던 새 구성 요소</b>. 상자를 클릭하면 해당 요소를 설명하는 위키 페이지로 이동합니다. 맨 아래 패널은 질의 시 합성이 아닌 <b>사전 컴파일형(LLM Wiki)</b> 분기 <code>[2차]</code>.</p>
 </header>
 <div class="legend">
   <span class="base">이전 단계에서 이어받은 요소</span>
   <span class="new">이 단계에서 새로 추가된 요소</span>
   <span style="--c: var(--trend)">에이전트 판단이 개입하는 요소 (점선)</span>
   <span style="--c: var(--knowledge)">GraphRAG 계열 — Knowledge 레이어의 그래프를 검색 구조로</span>
+  <span style="--c: var(--knowledge)">사전 컴파일형(LLM Wiki) — 질의 시 합성 대신 미리 컴파일한 위키를 참조, RAG 폴백과 결합 [2차]</span>
 </div>
 <div class="wrap">
-<svg id="evo" viewBox="0 0 1240 820" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="RAG 패턴 진화도">
+<svg id="evo" viewBox="0 0 1240 1130" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="RAG 패턴 진화도">
   <defs>
     <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#6b6b6b"/></marker>
     <marker id="arrT" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#8E44AD"/></marker>
@@ -66,7 +67,7 @@
 </div>
 <div id="tip"></div>
 <footer>
-  본문: <a href="../../03-agent-workflow-rag/01-rag-architecture-patterns.md">01 RAG 아키텍처 패턴</a>. "어떤 단일 아키텍처도 모든 시나리오에서 이기지 않는다" <code>[2차]</code>. GraphRAG 계열의 우위는 포맷 효과 통제 후 최난도 멀티홉에서만 뚜렷 (arXiv 2607.11683 <code>[검증]</code>).
+  본문: <a href="../../03-agent-workflow-rag/01-rag-architecture-patterns.md">01 RAG 아키텍처 패턴</a>. "어떤 단일 아키텍처도 모든 시나리오에서 이기지 않는다" <code>[2차]</code>. GraphRAG 계열의 우위는 포맷 효과 통제 후 최난도 멀티홉에서만 뚜렷 (arXiv 2607.11683 <code>[검증]</code>). 사전 컴파일형(LLM Wiki, Karpathy 2026-04)은 전부 2차 해설 기반 <code>[2차]</code>이며 원 gist 미확인 — RAG 대체가 아니라 소규모·누적형 보완. 파생 근거 등급은 <a href="../../02-data-pipeline/08-grounding-data-design.md">Part 2/08</a>.
 </footer>
 
 <script>
@@ -210,11 +211,64 @@ PATTERNS.forEach((p, i) => {
   text(x + 18, y + 222, "관련 문서 소수 · 맥락 보존 중요 → 하이브리드", "note", g);
 })();
 
+// ---- 사전 컴파일형(LLM Wiki) 분기 (최하단) — 질의 시 합성이 아니라 사전 종합 + 누적. 전부 [2차] ----
+const WIKI_Y = COLY + COLH + 50 + 230 + 28, WIKI_H = 262;
+const WIKI = {
+  raw:     { t: "raw/ 원문 (불변)", d: "LLM이 수정하지 않는 소스 = 컴파일러 비유의 소스 코드. 1차 근거는 여기서만 [2차]", href: P2 + "01-source-ingestion.md" },
+  ingest:  { t: "ingest = 컴파일 (LLM)", d: "원문 추가 → 요약 페이지 작성, index 갱신, 엔티티·개념 페이지 갱신, log 기록. 규칙은 스키마 파일(CLAUDE.md류). 스팬 wiki.ingest [2차]", href: P3 + "01-rag-architecture-patterns.md", new: true },
+  wiki:    { t: "wiki/ 페이지 + index.md + log.md", d: "LLM 생성 마크다운 — 요약·엔티티·개념·비교·종합. 파생 근거: 등급 E/F, derived_from[]·compiled_at·compiler_version·stale. 출처는 페이지 단위 [2차]", href: P2 + "08-grounding-data-design.md", new: true },
+  query:   { t: "query = 런타임", d: "index 따라 탐색 → 위키 내용으로 citation 포함 답 합성. 좋은 답은 새 페이지로 저장(compounding). 스팬 wiki.query [2차]", href: P3 + "01-rag-architecture-patterns.md", new: true, agent: true },
+  lint:    { t: "lint = 테스트", d: "결정론 자동 수정(인덱스 일관성·깨진 링크·원문 참조) + 휴리스틱 보고(모순·고아·stale·후보 페이지). Knowledge 레이어의 탐지 통제, 보고 소유자 필수. 스팬 wiki.lint [2차]", href: P3 + "01-rag-architecture-patterns.md", new: true, agent: true },
+  fallback:{ t: "원문 RAG 폴백 (위 Advanced 경로)", d: "페이지 없음 또는 stale → 질의 시 합성 경로로. 검증(04) 통과한 답은 위키로 환류. 출력 계약은 두 경로가 공유", href: P3 + "01-rag-architecture-patterns.md" },
+  trigger: { t: "원문 변경 → 재컴파일 트리거", d: "2/07 변경 큐(삭제·변경 레인) 소비자. derived_from[] 역참조 → 영향 페이지 stale → 재컴파일 전까지 폴백", href: P2 + "07-freshness-and-sync.md", new: true },
+};
+(function () {
+  const x = COLX, y = WIKI_Y, w = 4 * COLW + 3 * GAP, h = WIKI_H;
+  const g = el("g", {});
+  el("rect", { x, y, width: w, height: h, class: "col" }, g);
+  el("rect", { x, y, width: 6, height: h, fill: "var(--knowledge)", rx: 3 }, g);
+  text(x + 18, y + 26, "사전 컴파일형(LLM Wiki) 분기 — 질의 시 합성이 아니라 미리 컴파일한 위키를 참조  [2차]", "col-label", g).setAttribute("fill", "var(--knowledge)");
+  text(x + 18, y + 44, "Karpathy 2026-04 패턴(제품 아님). raw = 소스 코드 · LLM = 컴파일러 · wiki = 실행 파일 · lint = 테스트 · query = 런타임. 위 진화 열과 '대체'가 아니라 하이브리드(위키 먼저 → 원문 RAG 폴백 → 환류)로 결합", "col-sub", g);
+  // 1행: raw → ingest → wiki → query (가로 흐름)
+  const cw = 232, ch = 48, top = y + 62, gapx = (w - 36 - 4 * cw) / 3;
+  const cx = k => x + 18 + k * (cw + gapx);
+  comp(WIKI.raw, cx(0), top, cw, ch, g);
+  comp(WIKI.ingest, cx(1), top, cw, ch, g);
+  comp(WIKI.wiki, cx(2), top, cw, ch, g);
+  comp(WIKI.query, cx(3), top, cw, ch, g);
+  [0, 1, 2].forEach(k => el("path", { d: `M${cx(k) + cw},${top + ch / 2} L${cx(k + 1)},${top + ch / 2}`, class: "arrow" }));
+  // 2행: trigger(raw·ingest 아래) · lint(wiki 아래) · fallback(query 아래)
+  const top2 = top + ch + 46;
+  comp(WIKI.trigger, cx(0), top2, cw, ch, g);
+  comp(WIKI.lint, cx(2), top2, cw, ch, g);
+  comp(WIKI.fallback, cx(3), top2, cw, ch, g);
+  // trigger → ingest (원문 변경 시 재컴파일)
+  el("path", { d: `M${cx(0) + cw},${top2 + ch / 2} L${cx(1) + cw / 2},${top2 + ch / 2} L${cx(1) + cw / 2},${top + ch}`, class: "arrow" });
+  text(cx(0) + cw + 8, top2 + ch / 2 - 6, "stale → 재컴파일", "note", g);
+  // wiki ↔ lint 루프 (점선, 트렌드 색)
+  el("path", { d: `M${cx(2) + cw * 0.35},${top + ch} L${cx(2) + cw * 0.35},${top2}`, class: "loop" });
+  el("path", { d: `M${cx(2) + cw * 0.65},${top2} L${cx(2) + cw * 0.65},${top + ch}`, class: "loop" });
+  text(cx(2) + cw * 0.5, top2 - 16, "모순·고아·stale 보고", "note", g, "middle");
+  // query → fallback (없음/stale), fallback → wiki 환류 (점선)
+  el("path", { d: `M${cx(3) + cw * 0.35},${top + ch} L${cx(3) + cw * 0.35},${top2}`, class: "arrow" });
+  text(cx(3) + cw * 0.35 + 6, top2 - 16, "페이지 없음 / stale", "note", g);
+  el("path", { d: `M${cx(3)},${top2 + ch / 2} L${cx(2) + cw + 10},${top2 + ch / 2} L${cx(2) + cw + 10},${top + ch / 2 + 14} L${cx(2) + cw + 1},${top + ch / 2 + 14}`, class: "loop" });
+  text(cx(2) + cw + 14, top2 + ch / 2 + 14, "검증 통과 답 → 환류(compounding)", "note", g);
+  // 하단 노트
+  text(x + 18, y + 190, "적합: 코퍼스 수백 페이지 이하 · 변화 느림 · 종합·비교·누적 질문 · 같은 질문 반복   |   부적합: 수백만 문서 · 실시간 갱신 · 문장 단위 출처 요구 · 규제 감사  [2차]", "note", g);
+  text(x + 18, y + 208, "비용: 컴파일 선불(ingest·재컴파일 LLM) / 질의 비용 낮음.  한계: 환각 누적(위키에 들어간 오류가 다음 답의 근거) · 페이지 단위 출처 · 재컴파일 비용 · 인덱스 탐색 수백 페이지 상한", "note", g);
+  text(x + 18, y + 226, "오픈소스 구현은 '개인용 프로토타입, 산업급 에이전트 능력 결여' (arXiv 2604.11243 [검증]). 커뮤니티는 'RAG는 죽었다' vs '캐시 계층에 이름 붙인 것'으로 양분 [2차]. 원 gist 미확인", "note", g);
+  text(x + 18, y + 250, "→ 01 RAG 아키텍처 패턴 '질의 시 합성 vs 사전 컴파일' · Part 2/08 파생 근거(등급 E·F) · Part 3/08 운영 지식용 메모리 · Part 6 에이전트 메모리 생태계", "note", g);
+  text(x + w - 12, y + h - 10, "[2차] 원 gist 미확인 · 규모 한계만 [검증]", "verify", g, "end");
+  // 상단 Advanced 열 하단 → 이 패널 (폴백 경로가 돌아가는 곳) 연결 표시는 패널 안 상자로 대신한다
+})();
+
 // 하단 질의 복잡도별 배정표
 (function () {
-  const y = COLY + COLH + 50 + 230 + 28;
+  const y = WIKI_Y + WIKI_H + 28;
   text(COLX, y, "질의 복잡도별 기본 배정:  단순 사실 → Advanced   |   다중 문서 종합 → Advanced + 분해·멀티 쿼리 (경로 2개 이상이면 Modular)   |   멀티홉 → 그래프 탐색 결합 또는 Agentic   |   전역 요약 → GraphRAG 글로벌 또는 하이브리드 롱컨텍스트", "note");
   text(COLX, y + 18, "판단이 어려우면 → Naive로 기준선을 재고 Advanced(hybrid + 리랭킹)를 기본값으로. 그 이상은 실패 질의 유형이 측정으로 확인된 뒤에.", "note");
+  text(COLX, y + 36, "코퍼스 수백 페이지 이하 · 변화 느림 · 종합·반복 질문 → 사전 컴파일형(LLM Wiki) + 원문 RAG 폴백 하이브리드를 시험 (위키 유무 A/B [실측] 후 유지) [2차]", "note");
 })();
 </script>
 </body>

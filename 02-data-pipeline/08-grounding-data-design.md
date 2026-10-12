@@ -49,9 +49,10 @@ RAG는 "검색된 청크를 프롬프트에 넣으면 모델이 근거에 기반
 | **트리플** (triple) | (주어, 관계, 목적어) + 근거 문장 ID | 중 (그래프 탐색) | 높음 (구조 대조) | 중 (경로 시각화, 일반 사용자에겐 생소) | 상 (추출·검증·해소) |
 | **레코드** (record) | 정형 DB 행·API 응답 | 높음 (SQL/필터) | 높음 (값 대조) | 높음 (표·카드) | 하 (이미 구조화) |
 | **생성물** (derived) | VLM 캡션, LLM 요약, contextual 접두 | 중 | 낮음 (원문 아님) | 중 ("생성됨" 표시 필수) | 중 |
+| **LLM 파생 페이지** (wiki·요약·종합) | LLM Wiki(사전 컴파일형 지식 베이스) 등이 원문 **여러 건**을 읽고 사전 종합한 페이지. 1차 원문이 아닌 **파생 근거**(derived evidence) `[2차]` | 높음 (종합·비교·누적 질문에 index 탐색) | 낮음 (원문 아님 — 검증은 `derived_from[]`의 원문으로 치환) | 중 ("LLM 생성 · 컴파일 시각" 표시 필수, 출처는 페이지 단위) | 중 (컴파일 선불, 원문 변경 시 재컴파일) |
 | **하이브리드** | 청크로 검색, 문장으로 검증·하이라이트, 트리플로 경로, 레코드로 값 | 높음 | 높음 | 높음 | 중~상 (ID 체계 통합) |
 
-핵심은 **식별자 체계**다. 문장은 청크 안의 오프셋으로, 트리플은 근거 문장 ID로, 생성물은 `derived_from`으로 연결되어 어느 단위에서든 **원문 위치로 내려갈 수 있어야** 한다.
+핵심은 **식별자 체계**다. 문장은 청크 안의 오프셋으로, 트리플은 근거 문장 ID로, 생성물은 `derived_from`으로 연결되어 어느 단위에서든 **원문 위치로 내려갈 수 있어야** 한다. LLM 파생 페이지는 단일 원본이 아니라 **종합**이므로 `derived_from[]`(배열)로 여러 원문에 연결되고, 원문이 바뀌면 `stale`이 된다. 패턴 자체는 [Part 3/01](../03-agent-workflow-rag/01-rag-architecture-patterns.md)의 "질의 시 합성 vs 사전 컴파일" 소절.
 
 ### citation 스키마 (제안)
 
@@ -73,6 +74,10 @@ RAG는 "검색된 청크를 프롬프트에 넣으면 모델이 근거에 기반
 | `parent_id` | string | ○ | UI | 문장 → 청크, 청크 → 섹션 "펼쳐 보기" |
 | `graph_path` | array | ○ | UI | 트리플 근거의 경로 `[(s,p,o,evidence_id), ...]` |
 | `derived_from` | string | ○ | UI·검증기 | 생성물의 원본 근거 ID. 있으면 "생성됨" 표시 |
+| `derived_from[]` | array | ○ | UI·검증기·신선도 | LLM 파생 페이지(위키·종합)가 종합한 원문 근거 ID 목록. 단일 `derived_from`의 복수형 — 검증기는 이 원문들로 치환해 대조하고, 재컴파일 트리거는 이 배열을 역참조한다 |
+| `compiled_at` | datetime | ○ | UI·신선도 | 파생 페이지의 컴파일 시각. 원문 `doc_version` 변경 시각과 비교해 `stale` 산정 |
+| `compiler_version` | string | ○ | 감사 | 컴파일한 모델·프롬프트(스키마 파일) 버전. 원문의 `pipeline_version`에 해당 |
+| `stale` | bool | ○ | 검증기·UI | `derived_from[]` 중 하나라도 `compiled_at` 이후 변경·삭제됨. true면 근거 제외(등급 F) + 원문 RAG 폴백 |
 | `conflicts_with` | array | ○ | 둘 다 | 상충 근거 ID 목록과 관계(`superseded_by`, `contradicts`, `scope_differs`) |
 | `retrieval_score`, `rerank_score` | number | ○ | 디버그 | 검색·리랭크 점수. 사용자 노출 비권장 |
 | `pipeline_version` | string | ○ | 감사 | 파서·청커·추출기 버전 묶음 |
@@ -95,8 +100,10 @@ RAG는 "검색된 청크를 프롬프트에 넣으면 모델이 근거에 기반
 | **B** | 승인 문서 또는 검증 통과 추출 + 유효 | 단독 가능, UI에 등급 표시 |
 | **C** | 비공식 소스 또는 생성물, 또는 검토 기한 경과 | 다른 근거와 함께만, "참고" 표시 |
 | **D** | 만료 또는 외부 미검증 | 기본 제외. 명시 요청 시만, 경고와 함께 |
+| **E** (파생) | LLM 생성 파생 페이지(위키·요약·종합), `derived_from[]` 보유, `stale=false` | 종합·비교 질의의 근거로 가능하되 "LLM 생성 · 컴파일 시각" 표시. 검증기 대조는 원문으로 치환, 문장 단위 출처·감사 요구 질의에서는 제외. 취급은 C에 준함 |
+| **F** (파생) | LLM 생성, `derived_from[]` 없음 또는 `stale=true` | **인용 금지**. 재컴파일 큐 + 원문 RAG 폴백 |
 
-등급 규칙은 **코드로** 둔다(택소노미 × 계보 × 날짜의 결정론적 함수). LLM에게 "신뢰도를 매겨라"고 하지 않는다. 그것은 보정되지 않은 숫자다.
+E·F는 A~D와 **다른 축**("원문이 아니다")이다. E가 D(만료)보다 낮다는 뜻이 아니라 원문 등급과 섞어 비교하지 않는다는 뜻이며, `confidence.grade` enum에 E·F를 더하는 것은 추가 전용 스키마 변경이다. 등급 규칙은 **코드로** 둔다(택소노미 × 계보 × 날짜의 결정론적 함수). LLM에게 "신뢰도를 매겨라"고 하지 않는다. 그것은 보정되지 않은 숫자다.
 
 ### 상충·반증 근거
 
@@ -137,6 +144,7 @@ RAG는 "검색된 청크를 프롬프트에 넣으면 모델이 근거에 기반
 | 트리플·경로 단위 | 멀티홉 설명, 규제의 "왜" 요구, 그래프 보유 | 그래프 없음, 일반 사용자 대상(생소) | 상 | 신생~안정 | `[2차]` |
 | 레코드 단위 | 정형 데이터(상품·가격·재고·티켓) | 비정형 서술 | 하 | 표준 | — |
 | 생성물을 근거로 허용 | 도표·이미지가 핵심이고 원문 텍스트가 없음 | 검증 근거·규제 설명(원본 아님) | 중 | 신생 | `[2차]` "생성됨" 표시 필수 |
+| LLM 파생 페이지(위키)를 근거로 허용 — 등급 E·F + 파생 필드 | 코퍼스 소규모·변화 느림·종합 질문 반복(LLM Wiki 하이브리드) | 문장 단위 출처·규제 감사, 실시간 갱신 | 중 (파생 필드 + 재컴파일 트리거) | 신생 (2026-04) | `[2차]` 원 gist 미확인 |
 | 하이브리드 (청크 검색 + 문장 검증·렌더 + 트리플 경로 + 레코드 값) | 대부분의 운영 환경 | 단일 소스 소규모 PoC(과잉) | 중~상 | 안정 | `[2차]` |
 | 신뢰도 = 검색 점수 | 없음 (안티패턴) | 모든 운영 | 하 | — | `[2차]` 혼동 사례 다수 |
 | 신뢰도 = 코드 규칙 (소스 × 생성 방식 × 신선도) | 모든 운영 | — | 중 | 안정 | `[2차]` |
@@ -150,6 +158,7 @@ RAG는 "검색된 청크를 프롬프트에 넣으면 모델이 근거에 기반
 - **업무 지원 이상이고 UI에 근거 하이라이트가 있다면** → 하이브리드(청크 검색 + 문장 검증·렌더). 이유: 검증기와 UI 계약을 동시에 만족하는 최소 구성
 - **멀티홉 설명이나 규제 "왜" 요구가 있다면** → 트리플·경로 추가, 트리플에 근거 문장 필수. 이유: 경로 없이는 설명 불가, 근거 문장 없이는 검증 불가
 - **정형 데이터가 섞여 있다면** → 레코드 단위를 별도 `evidence_type`으로. 이유: 값 대조와 표 렌더가 텍스트와 다르다
+- **코퍼스가 소규모·변화 느림이고 종합·반복 질문이 많아 LLM Wiki를 쓴다면** → 위키 페이지를 LLM 파생 페이지로 받되 등급 E·F + 파생 필드 4개(`derived_from[]`·`compiled_at`·`compiler_version`·`stale`). 이유: 원문 등급과 섞이면 "근거 있는 환각"이 A처럼 보이고, `stale` 없이는 원문 개정이 위키에 닿지 않는다
 - **판단이 어려우면** → 기본값: 하이브리드(청크 + 문장) + 코드 규칙 신뢰도 + 메타데이터 결정론 상충 탐지, 트리플은 그래프 도입 시 추가. 이유: 두 계약을 만족하면서 확장 가능
 
 ## 설계 시 고려사항 (체크리스트)
@@ -161,6 +170,7 @@ RAG는 "검색된 청크를 프롬프트에 넣으면 모델이 근거에 기반
 - [ ] 신뢰도 등급이 코드 규칙(소스 × 생성 방식 × 신선도)이고 LLM 자가 평가가 아닌가
 - [ ] 검색 점수와 신뢰도 등급을 UI에서 혼동하지 않게 분리했는가
 - [ ] 생성물(캡션·요약·접두)이 `derived_from`을 갖고 검증 근거에서 원본으로 치환되는가
+- [ ] LLM 파생 페이지가 등급 E·F와 `derived_from[]`·`compiled_at`·`compiler_version`·`stale`을 갖고, `stale=true`는 인용되지 않는가
 - [ ] 트리플 근거가 근거 문장 `text`를 함께 갖는가
 - [ ] 상충 유형(개정 / 범위 / 모순 / 반증)별 표현과 답변 처리 규칙이 있는가
 - [ ] 진짜 모순은 답변이 하나를 고르지 않고 둘 다 제시 + 소유자 알림이 되는가
@@ -177,6 +187,8 @@ RAG는 "검색된 청크를 프롬프트에 넣으면 모델이 근거에 기반
 | 상충 탐지의 비용 | 쌍 전수 비교는 제곱 | 같은 주제·같은 정본의 후보만, 관계는 데이터로 기록해 재사용 |
 | 트리플 근거의 사용자 이해도 | 경로 시각화를 일반 사용자가 못 읽음 | 경로를 자연어 한 문장으로 렌더 + 펼치면 경로 |
 | 생성물의 근거 자격 | VLM 캡션이 틀리면 "근거 있는 환각" | "생성됨" 표시, 등급 C 이하, 검증 근거 불허 |
+| LLM 파생 페이지의 **환각 누적** | 위키에 들어간 오류가 다음 답의 근거가 되고, 그 답이 다시 페이지로 저장되어(compounding) 오류가 누적된다. 출처가 페이지 단위라 어느 문장이 어느 원문에서 왔는지 흐려짐 `[2차]` | 등급 E·F로 원문과 분리, 검증기는 `derived_from[]` 원문으로 치환, 환류(새 페이지 저장)는 검증 통과 답만, lint 모순 보고의 소유자 지정 |
+| 원문 변경이 파생 페이지에 전파되지 않음 | 원문이 개정·삭제됐는데 위키 페이지가 옛 내용으로 답함 | 위키를 [07](07-freshness-and-sync.md) 삭제·변경 레인의 **소비자**로 등록, `derived_from[]` 역참조 → `stale=true` → 재컴파일 전까지 인용 금지(F) |
 | 스키마 변경의 파급 | 필드 추가가 Part 3·4 양쪽 변경 | 스키마 버전, 선택 필드로 추가 후 승격 |
 | 독립 벤치마크 부재 | 근거 단위 설계가 정답률·신뢰에 미치는 효과의 공개 측정 드묾 | 자체 골든셋으로 정합성·사용자 확인율 `[실측]` |
 
@@ -225,6 +237,7 @@ SLI 후보: ① citation 필수 필드 완전성(노출된 근거 중 100%) ② 
 | 변화 유형 | 이 단계에서 바뀌는 것 | 안정적으로 유지할 계약·인터페이스 | 교체 가능한 구현 | 흡수 방식 | 전파 범위 |
 |---|---|---|---|---|---|
 | **지식** (가장 잦음) | 문서 새 판 → 근거 단위 재생성, 구판 `valid_to`·`superseded_by` 설정, 삭제 → 근거 제외 | `evidence_id` 체계, citation 스키마 | — | 문서 단위 파생물 재생성(증분). 개정 상충은 메타데이터 규칙으로 자동 기록. 삭제는 톰스톤이 등급·노출에 즉시 반영 | 해당 문서 근거 + 그 근거를 캐시한 Part 3 답변 캐시 |
+| **지식 — LLM 파생 페이지** (LLM Wiki 사용 시) | 원문 판·삭제 → `derived_from[]` 역참조로 영향 페이지 `stale=true` → 재컴파일 | citation 스키마의 파생 필드(`derived_from[]`, `compiled_at`, `compiler_version`, `stale`) | 컴파일러(모델·프롬프트) | **재컴파일 트리거**: 위키를 [07](07-freshness-and-sync.md) 변경 큐 삭제·변경 레인의 소비자로 등록. 삭제는 파생 페이지 제거까지 전파 | 파생 페이지 + 그 페이지를 근거로 한 Part 3 결과 캐시 |
 | **규칙·정책** (두 번째) | 소스 등급 승격·강등(위키가 공식 소스로), 등급별 노출 정책, 상충 처리 규칙 | 등급 함수 인터페이스(`grade(source, method, freshness) → A~D`) | 등급 매트릭스 값 | **설정 테이블 교체 + 배치 재계산**(재색인 없음) + 시행일 기록 | 영향 소스의 근거 등급, Part 4 배지 |
 | **도메인 모델** | `evidence_type` 추가(예: 이미지 영역), 상충 관계 유형 추가, 주제 택소노미 변경 | enum은 온톨로지 참조 | enum 값 | 온톨로지 매핑 + 스키마 선택 필드로 추가 후 승격 | 검증기·렌더러 분기 |
 | **모델** | 상충 탐지 NLI·판정 모델 교체, 문장 분할기 교체 | `is_conflict(a, b) → {relation, confidence}`, `split(text) → [offsets]` 포트 | 어댑터(NLI / 결정 모델 / 규칙) | 어댑터 교체 + 라벨셋 회귀 + 기존 관계 샘플 재판정 | 상충 관계 레코드, 문장 오프셋 |
@@ -243,6 +256,7 @@ SLI 후보: ① citation 필수 필드 완전성(노출된 근거 중 100%) ② 
 | 상충 탐지 (색인 시) | `evidence.conflict` (부모 `evidence.build`), 내용 모순 판정은 자식 `evidence.conflict.nli`(`gen_ai.*` 또는 결정 모델 속성) | `agent.conflict_method`(metadata / nli / decision_model), `agent.conflict_model_version`, `agent.candidate_pairs`(블로킹 후), `agent.conflicts_found{revision,scope,content}`, `agent.confidence` 분포, `gen_ai.usage.*`, `agent.cost_estimate` | `evidence.conflict.errors` → "상충 탐지기 호출 오류율", `evidence.conflict.mode{nli,metadata_only}` 비율, `evidence.conflict.cost_per_1k_pairs` → 대시보드 ③ | 전수. 쌍의 텍스트는 기록 금지 |
 | locator 샘플 검증 | `evidence.verify` 배치 이벤트 (부모 없음, 대상 문서 트레이스에 링크) | `agent.sample_size`, `agent.locator_valid_count`, `agent.mismatch_evidence_ids[]`, `agent.parser.version`·`agent.chunk_version`(미갱신 경로 추적) | `evidence.verify.locator_valid_ratio` → **SLI ② locator 유효율**, 탐지 신호 "`text == original[locator]` 불일치율" — 01·02도 이 지표를 자기 버전 키로 분해해 읽음 | 일 1회(예시). 보존 90일 |
 | citation 조립 (질의 시) | `evidence.assemble` (부모: Part 3 `retrieval.assemble`), 자식 `evidence.assemble.meta_join` · `evidence.assemble.acl_check` · `evidence.assemble.conflict_lookup` | `request_id`, `tenant_id`, `agent.evidence_ids[]`, `agent.evidence_count{candidate,exposed,excluded}`, `agent.exclusion_reasons[]`(missing_field / meta_unavailable / acl_denied / grade_d), `agent.acl_checked`(bool, 요청 단위), `agent.subject_set_hash`, `agent.citation_schema_version`, `agent.grade_rules_version`, `agent.index_version`, `agent.cache_hit`, `agent.degradation[]`(`evidence_partial`, `conflict_check_metadata_only`), `agent.outcome`(success / degraded / blocked) | `evidence.assemble.errors{dependency}` → "조립 실패율·의존 서비스 오류율", `evidence.assemble.duration_ms{join}` → **SLI ③ 조립 p95**, "조인별 지연", `evidence.assemble.excluded_ratio{source,reason}` → "소스별 제외율", `evidence.assemble.zero_evidence` 카운터(근거 0건 → Part 3 신호), `evidence.assemble.acl_unchecked_exposed`(0이어야 함) → **SLI ① 필수 필드 완전성**의 보장 검증 | 메타 전수(사용자 턴 트레이스의 일부). 본문 없음. 사용자 ID 없음(`subject_set_hash`만). `blocked`·`degraded` 턴 100% |
+| 파생 페이지 신선도 (LLM Wiki 사용 시) | `wiki.ingest`(재컴파일, 문서 단위 트레이스) / `evidence.assemble`에 파생 근거 속성 추가 — 스팬 이름은 [Part 1/07](../01-foundations/07-operations-vocabulary.md) 규약 | `agent.evidence_derived`(bool), `derived_from[]` 개수, `agent.compiler_version`, `agent.stale_excluded_count`, 재컴파일 지연(원문 변경 시각 − `wiki.ingest` 완료) | **`stale` 비율**(노출 후보 중 stale로 제외된 파생 근거 비율), 재컴파일 지연 p95, 파생 근거(E) 노출 비율 → "원문 변경 미전파" 탐지 | 메타 전수. 페이지 본문 없음 |
 | 하류 정합성 (공유) | Part 3/04 검증기 스팬 (이 단계 소유 아님) | `agent.citation_schema_version`, `agent.evidence_type` | citation ⊂ 검색 결과 비율·검증기 통과율을 `citation_schema_version`·`evidence_type`으로 분해 → **SLI ④ 하류 정합성 통과율** | Part 3 정책 |
 
 질의 시 `evidence.assemble`은 사용자 턴 트레이스 안에 있으므로 샘플링 정책도 [Part 5/03](../05-cross-cutting/03-observability-tracing.md)의 턴 정책을 따른다 — 메타 100%, `blocked`(근거 0건)·`degraded`(partial·metadata_only) 턴은 100% 보존, citation `text`는 어떤 경우에도 스팬에 넣지 않고 `evidence_id`로 본문 저장소를 역참조한다.
@@ -287,6 +301,7 @@ SLI 후보: ① citation 필수 필드 완전성(노출된 근거 중 100%) ② 
 | 온톨로지 | `evidence_type`·소스 등급·주제 범위의 어휘를 온톨로지에서. 트리플 근거의 관계명이 온톨로지 관계라야 경로를 자연어로 렌더할 수 있다. 벡터 경로와 그래프 경로가 같은 어휘로 합류하는 지점 | 그래프 또는 구조화 메타데이터 보유 | `[2차]` |
 | 생성물의 근거화 | VLM 캡션·LLM 요약·contextual 접두가 인덱스에 섞이며 "원문 vs 생성"의 구분이 citation 스키마의 필수 요소가 됨 | 멀티모달·맥락 보강 사용 시 | `[2차]` |
 | Agentic RAG | 검색이 에이전트 루프 "안"으로 들어오면서 근거 단위가 한 번이 아니라 여러 턴에 걸쳐 누적. `evidence_id`의 턴 간 안정성과 중복 제거가 필요 | 에이전트형 검색 | `[2차]` |
+| LLM Wiki(사전 컴파일형 지식 베이스) | LLM이 쓴 종합 페이지가 근거 후보에 들어오며 "원문 vs 파생"의 구분이 등급(E·F)과 필드(`derived_from[]`·`compiled_at`·`compiler_version`·`stale`)로 스키마에 들어감. 환각 누적을 막는 수단은 **원문 치환 검증 + 재컴파일 트리거** | 코퍼스 소규모·변화 느림·종합 질문 반복([Part 3/01](../03-agent-workflow-rag/01-rag-architecture-patterns.md) 하이브리드) | `[2차]` |
 
 ## 관련 페이지
 
@@ -297,6 +312,7 @@ SLI 후보: ① citation 필수 필드 완전성(노출된 근거 중 100%) ② 
 - [10 접근 제어와 거버넌스](10-access-control-governance.md) — `acl_checked`
 - [Part 3/04 생성과 근거 강제](../03-agent-workflow-rag/04-generation-grounding.md) — 검증기 계약
 - [Part 4/06 HITL UI 패턴](../04-dynamic-ui/06-hitl-ui-patterns.md) — 렌더 계약
+- [Part 3/01 RAG 아키텍처 패턴](../03-agent-workflow-rag/01-rag-architecture-patterns.md) — 질의 시 합성 vs 사전 컴파일(LLM Wiki), [Part 6/agent-memory](../06-trends/agent-memory.md) — 운영 지식용 메모리와 파생 근거
 - [Part 5/04 거버넌스와 설명가능성](../05-cross-cutting/04-governance-explainability.md), [시나리오 A](../07-appendix-scenarios/01-enterprise-document-qa.md)
 
 ## 참고 문헌
@@ -308,3 +324,4 @@ SLI 후보: ① citation 필수 필드 완전성(노출된 근거 중 100%) ② 
 - `[2차]` RAGAS의 faithfulness·context precision 지표 — 근거-답변 정합성 측정의 실무 기준. judge 파싱 실패가 NaN으로 조용히 제외되는 문제 보고
 - `[2차]` 근거 하이라이트·citation UI의 실무 패턴 — 문서 QA 제품들의 공통 설계
 - `[2차]` Agentic RAG — 검색이 루프 "앞"이 아니라 "안"으로
+- `[2차]` Karpathy LLM Wiki(2026-04) 해설 — LLM이 쓴 위키 페이지는 파생 근거, 출처는 페이지 단위. 원 gist 미확인. 규모 한계는 `[검증]` arXiv 2604.11243
